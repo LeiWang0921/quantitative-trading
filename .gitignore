@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+data/
+logs/
+.env
+results/
+
+# 另一个独立的仓库（有自己的 .git），不属于这个项目
+triumf-ai-workshop-2026/
+
+# 本机才有意义的文件：快捷方式里是本机的绝对路径；config.toml.bak 是“加入候选股”前的自动备份
+*.lnk
+config.toml.bak
+*.tmp
+.vscode/

@@ -1,0 +1,84 @@
+# 运行模式：
+#   dryrun = 本地假券商，不联网，不需要账户
+#   paper  = 盈透模拟账户（IB Gateway 用模拟账户登录）
+#   live   = 盈透实盘账户（真钱！还需要把下面的 allow_live 改成 true）
+mode = "paper"
+
+[ibkr]
+host = "127.0.0.1"
+paper_port = 4002       # IB Gateway 模拟盘端口（TWS 是 7497）
+live_port = 4001        # IB Gateway 实盘端口（TWS 是 7496）
+client_id = 1
+what_to_show = "TRADES" # 历史数据类型；没有行情订阅取不到数据时可试 "MIDPOINT"
+
+[strategy]              # run.py 和 backtest.py 用的策略（原理见 docs/防守策略研究报告.md）
+# 当前运行哪个策略：
+#   "sleeves" = 个股为主（约 70%）+ 美债/黄金防守（约 30%）：B1（2026-10-22 起，7 只全持有）→ B2（2026-10-23 起，10 只候选、持有前 7）
+#   "spy_ief" = SPY + 美债的防守策略（2026-10-19 ~ 10-21 在模拟盘运行过）
+kind = "sleeves"
+# ---- 两个策略共用的参数 ----
+trend_windows = [100, 150, 200, 250, 300]   # 多周期趋势：价格在这几条均线上方的（加权）比例 = 趋势信号（0~1）
+trend_band = 0.01       # 均线缓冲 1%：涨过均线 1% 才算“在上方”，跌破 1% 才算“在下方”
+vol_lookback = 20       # 用最近多少个交易日估计波动率
+# 实盘/模拟盘里“满仓 100%” = 美元现金 + 策略里各标的的持仓市值；
+# 留 cash_reserve 的现金不投，应对次日开盘跳空和手续费（现金账户余额不够会被拒单）
+cash_reserve = 0.02
+# 切换策略时要清仓的旧持仓（不属于当前策略的标的）。清完以后可以留空
+exit_symbols = ["SPY"]
+
+[strategy.sleeves]      # 方案 B2（2026-10-23 起）：个股为主 + 美债/黄金防守
+# 候选股（数量不限，随时可以增减）：苹果 英伟达 亚马逊 可口可乐 摩根大通 百胜中国 网易 谷歌(A类股)
+#   Verizon(美国最大的电信运营商) 拼多多 网飞 迪士尼
+# 增减候选股直接改这里，然后运行一次 fetch_data.py：持有数量不变，每只的满额不会被摊薄
+stocks = ["AAPL", "NVDA", "AMZN", "KO", "JPM", "YUMC", "NTES", "GOOGL", "VZ", "PDD", "NFLX", "DIS"]
+max_holdings = 7        # 最多持有 7 只：每天按“满额比例”排名，持有前 7 只，每只满额 70% / 7 = 10%
+rank_buffer = "auto"    # 排名缓冲：已持有的股票跌出前 7 + 缓冲 名才换掉。"auto" = 候选数 ÷ 4（12 只 → 3，即跌出前 10 名才换）
+stock_share = 0.70      # 个股部分共占 70%
+vol_target = 0.20       # 每只个股的满额比例 = 趋势信号 × min(1, 20% / 这只股票最近 20 日年化波动)
+# 5 条均线（trend_windows：100/150/200/250/300 日）的权重。在几百只标普 500 股票上滚动训练的结果偏重 250 日；
+# 100 日保留 4%，让趋势信号的取值更细，排名时少出现并列
+trend_weights = [0.04, 0.19, 0.19, 0.49, 0.09]
+defense = ["IEF", "GLD"]   # 防守部分：7-10 年期美国国债、黄金，各占 (1 - 70%) / 2 = 15%，再加上个股没用完的钱
+defense_trend_window = 200 # 防守资产高于自己的 200 日均线才持有，否则那一份留作现金
+defense_vol_target = 0.15  # 防守资产也按 min(1, 15% / 自己最近 20 日波动) 缩放，缩下来的部分留作现金（2026-10-23 起）
+# 逢跌加仓（2026-10-23 起）：SPY 仍在 300 日均线之上（长期牛市），但比最近 63 个交易日的高点跌超 8% 时，
+# 仍在自己 300 日均线之上的股票按满额持有，不因短期下跌和波动升高而减仓（押注牛市中的急跌会较快反弹）。
+# 删掉这一行或设为 0 即关闭
+dip_threshold = 0.08
+# 再平衡：只调整实际占比和目标相差超过 3 个百分点的标的（其余不动），交易笔数少、手续费低
+rebalance_band = 0.03
+drift_only = true
+
+[strategy.spy_ief]      # 之前的方案：SPY + 美债（保留参数，方便对比或切回）
+stock = "SPY"
+bond = "IEF"
+vol_target = 0.10
+bond_trend_window = 200
+# 经济过滤：趋势转弱时，如果首次申请失业金没有上升就不减仓（"claims"），"none" = 不使用
+economy_filter = "claims"
+rebalance_band = 0.05   # 任何一个标的偏离超过 5 个百分点，就全部调回目标
+drift_only = false
+
+[backtest]              # fetch_data.py（默认下载当前策略的全部标的）和 backtest.py
+years = 25              # 下载多少年的历史日线（IEF 从 2002 年开始）
+cost_bps = 5            # 回测里每成交 1 美元的成本（基点，0.01%）：手续费 + 买卖价差
+
+[risk]
+allow_live = false      # 实盘总开关，默认关闭
+# 单笔订单的上限，防止程序出错时下出离谱的单。按模拟盘约 70 万 USD 设置（切换策略时一次卖出约 905 股 SPY）。
+# 切到实盘前务必按实盘资金重新设置这两个上限！
+max_shares_per_order = 2000
+max_order_value_usd = 800000
+
+[research]              # 防守型策略研究（fetch_data.py --research、fetch_macro.py、research.py）
+# 美股大盘 纳指100 小盘 发达市场(除美) 新兴市场 | 中期/长期/短期国债 综合债 公司债 通胀保值债 | 黄金 商品 房地产 | 1-3月国库券
+symbols = ["SPY", "QQQ", "IWM", "EFA", "EEM",
+           "IEF", "TLT", "SHY", "AGG", "LQD", "TIP",
+           "GLD", "DBC", "VNQ", "BIL"]
+years = 35              # 盈透能给多少给多少（SPY 从 1993 年开始）
+# 这几只国债 ETF 后来换了上市交易所，用 ARCA 才能取到 2002 年起的完整历史
+exchanges = { IEF = "ARCA", TLT = "ARCA", SHY = "ARCA" }
+fred = ["DTB3", "DGS10", "DGS2", "T10Y3M", "BAA10Y", "VIXCLS",   # fetch_macro.py 下载的 FRED 序列
+        "USEPUINDXD", "UMCSENT", "EMVOVERALLEMV",                  # 新闻/调查类指标（见 fetch_macro.py）
+        "UNRATE", "ICSA", "SAHMREALTIME"]                          # 就业/经济周期指标
+my_stocks = ["TSLA", "AAPL", "MSFT", "GOOGL", "KO"]   # 你关注的股票：特斯拉 苹果 微软 谷歌(A类股) 可口可乐

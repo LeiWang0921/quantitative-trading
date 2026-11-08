@@ -1,0 +1,13 @@
+ib_async
+
+# 窗口程序（gui.py）
+PySide6
+
+# 研究和图表（research.py、autotrader/research/、notebooks/）
+pandas
+matplotlib
+ipykernel
+statsmodels
+scikit-learn
+arch
+openpyxl
