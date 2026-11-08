@@ -1,5 +1,7 @@
 # quantitative trading
 
+**English:** a learning project for automated US stock trading through Interactive Brokers (Windows). To download, install, configure and run it on your own PC, see **[docs/SETUP.md](docs/SETUP.md)**.
+
 一个用来学习的自动交易框架：同一套代码可以在本地假券商、盈透模拟账户、盈透实盘之间切换，只改 `config.toml` 里的 `mode`。
 
 ## 结构
