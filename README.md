@@ -16,7 +16,7 @@ run.py                   交易：取数据 → 算目标仓位 → 风控 → �
 backtest.py              回测 config.toml 里配置的策略，和“一直持有”“60/40”对比
 candidate_charts.py      ★ 生成 docs/候选股票池.md：每个候选股一张 K 线图，阴影标出按当前规则持有的时间和仓位
 tools/convert_fx.py      工具：在盈透账户里换汇（CAD ⇄ USD）
-tools/daily_run.bat      Windows 计划任务每天调用它来运行 run.py
+tools/daily_run.bat      Windows 计划任务每天调用它来运行 run.py（出问题时弹窗 + 发邮件提醒）
 桌面图标“自动交易策略 - leiwang”  ★ 打开监控窗口（gui.py）：连接状态、运行环境、选股池与持仓、净值、日志、策略说明。只读，不下单。
                          只能开一个：缩在托盘时再双击图标会调出原来的窗口。start_gui.bat 效果相同
 tools/setup.bat          新电脑第一次使用：创建 .venv、安装 requirements.txt、建立桌面和开始菜单图标
@@ -40,6 +40,7 @@ docs/
 autotrader/strategy.py   ★ 实盘/模拟盘的策略（纯计算：收盘价 → 各标的目标权重），和回测共用同一套函数
 autotrader/history.py    历史数据 CSV 的读写
 autotrader/config.py     读取 config.toml、常用路径
+autotrader/notify.py     邮件提醒：用本机 Outlook 发到 config.toml 的 [notify] email，不需要密码
 autotrader/records.py    run.py 每次运行的记录（data/last_run.json、data/nav_history.csv），给窗口程序读
 autotrader/gui/          窗口程序：app.py 界面、checks.py 运行环境检查、ibdata.py 只读取盈透数据、
                          config_edit.py 加入候选股、strategy_text.py 策略说明（数字从 config.toml 读）、
@@ -48,6 +49,7 @@ autotrader/broker/
   base.py                券商接口（所有券商都要实现的方法）
   dryrun.py              本地假券商（随机价格，不联网）
   ibkr.py                盈透，经 IB Gateway 连接
+tests/                   自动测试：下单流程（假券商）、策略计算、配置安全、提醒逻辑
 
 ── autotrader/research/ 模块：研究（只用于历史回测）───────
   data.py                读取和清洗数据，合成长期国债回报
@@ -77,6 +79,10 @@ logs/scheduled_run.log   计划任务的运行记录（连接失败等错误也�
 .venv\Scripts\python run.py              # 按 config.toml 运行一次
 .venv\Scripts\python run.py --no-trade   # 只看决策，不下单
 .venv\Scripts\python run.py --reset      # 清空 dryrun 状态
+
+# 改了 run.py、策略或 config.toml 之后跑一遍测试（不连盈透，约 2 秒）
+.venv\Scripts\python -m unittest discover -s tests
+.venv\Scripts\python -m autotrader.notify   # 发一封测试提醒邮件
 
 # 简单回测（需要 IB Gateway 已登录才能下载；下载后回测不用联网）
 .venv\Scripts\python fetch_data.py       # 下载当前策略全部标的的历史数据（25 年）
@@ -117,6 +123,8 @@ dryrun 模式下每运行一次相当于过了一个交易日。
 - **成交**：收盘后运行，市价单在下一个交易日开盘成交；再次运行会把挂单计入，不会重复下单。
 - **每日自动运行**：Windows 计划任务 `QuantTrading-DailyRun` 每周一到周五 14:45 和 20:00（温哥华时间，美股收盘后）
   调用 `tools\daily_run.bat`（只含英文，cmd 读中文会出错），它再调用 `tools\daily_run.py`：写日志、运行 run.py、失败时弹出提醒。
+  - 邮件提醒（`[notify] email`）：运行失败、有订单被风控拒绝、失败后补跑成功时各发一封，附运行输出的最后 40 行。
+    用本机 Outlook 桌面版发送；手机装 Outlook App 就能收到推送。电脑关机或睡眠时任务不会运行，也就不会有邮件。
   20:00 是补跑：同一天运行两次不会重复下单。手动测试（不下单）：`tools\daily_run.bat --no-trade`。
   - IB Gateway 要设置成“自动重启”（配置 → 设置 → 锁定和退出），否则每天会自动退出；盈透要求每周手动完整登录一次。
   - 暂停：任务计划程序里右键该任务 → 禁用；或 PowerShell：`Disable-ScheduledTask -TaskName QuantTrading-DailyRun`
@@ -145,4 +153,6 @@ dryrun 模式下每运行一次相当于过了一个交易日。
 - `mode = "live"` 必须同时把 `risk.allow_live` 改成 `true` 才会运行。
 - 如果 mode 不是 live 却连到了实盘账户（账户号不以 D 开头），立即中止。
 - 单笔股数、单笔金额都有上限；买入前检查美元现金。
+- 不做空：卖出股数不能超过持仓减去已挂的卖单（还没成交的买单不算）。
+- `tests/` 里的测试覆盖以上各条，另外检查当前 config.toml 没有打开实盘。
 - 账号密码只在 IB Gateway 里输入，不写进任何文件。

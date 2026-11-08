@@ -70,6 +70,10 @@ allow_live = false      # 实盘总开关，默认关闭
 max_shares_per_order = 2000
 max_order_value_usd = 800000
 
+[notify]                # 自动运行出问题时发邮件提醒（tools/daily_run.py；用本机 Outlook 发，不需要密码）
+# 运行失败、有订单被风控拒绝、失败后补跑成功时各发一封。留空 = 不发。测试：python -m autotrader.notify
+email = "leiwang0921@outlook.com"
+
 [research]              # 防守型策略研究（fetch_data.py --research、fetch_macro.py、research.py）
 # 美股大盘 纳指100 小盘 发达市场(除美) 新兴市场 | 中期/长期/短期国债 综合债 公司债 通胀保值债 | 黄金 商品 房地产 | 1-3月国库券
 symbols = ["SPY", "QQQ", "IWM", "EFA", "EEM",

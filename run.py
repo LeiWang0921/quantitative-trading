@@ -132,9 +132,15 @@ def log_signal(params: dict, weights: dict[str, float], info: dict) -> None:
     log.info("目标权重合计 %.0f%%，现金 %.0f%%", sum(weights.values()) * 100, (1 - sum(weights.values())) * 100)
 
 
-def check_order(cfg: dict, qty: int, price: float) -> str | None:
-    """风控：返回拒单原因；通过检查返回 None。"""
+def check_order(cfg: dict, qty: int, price: float, sellable: int) -> str | None:
+    """风控：返回拒单原因；通过检查返回 None。
+    sellable：现在能卖的股数 = 持仓 - 已挂的卖单（还没成交的买单不算，不能先卖还没买到的股票）。"""
     risk = cfg["risk"]
+    if qty == 0:
+        return "数量为 0"
+    if qty < 0 and -qty > sellable:
+        # 不做空：卖出超过持仓就是卖空（现金账户会被拒单，保证金账户则真的会做空）
+        return f"卖出 {-qty} 股超过可卖持仓 {max(sellable, 0)} 股（不做空）"
     if abs(qty) > risk["max_shares_per_order"]:
         return f"数量 {abs(qty)} 超过单笔上限 {risk['max_shares_per_order']}"
     value = abs(qty) * price
@@ -221,7 +227,7 @@ def run(cfg: dict, trade: bool) -> None:
                     qty = max(affordable, 0)
                 if qty == 0:
                     continue
-            reason = check_order(cfg, qty, prices[s])
+            reason = check_order(cfg, qty, prices[s], positions[s] + min(pending[s], 0))
             if reason:
                 log.warning("%s 拒单：%s", s, reason)
                 record["orders"].append({"symbol": s, "qty": qty, "result": f"拒单：{reason}"})
