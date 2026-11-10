@@ -348,6 +348,7 @@ None of these are in the repository; they are created on your PC as the program 
 | `data\history\` | Price history downloaded by `fetch_data.py` (CSV) |
 | `data\last_run.json` | The latest run's full decision record (shown in the monitoring window) |
 | `data\nav_history.csv` | Account value at every run (the monitoring window's chart) |
+| `data\bars\` | Recent daily bars saved at every run, for the 1-year candlestick popup (right-click a row in the pool table) |
 | `data\us_symbols.csv` | US symbol list from `tools\update_symbols.py` |
 | `logs\trader.log` | Log of every `run.py` run |
 | `logs\scheduled_run.log` | Scheduled runs, including errors and alert-email results |

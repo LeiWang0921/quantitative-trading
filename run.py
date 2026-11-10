@@ -53,9 +53,12 @@ def make_broker(cfg: dict) -> Broker:
     sys.exit(f"未知 mode: {mode}")
 
 
-def latest_closes(broker: Broker, symbols: list[str], days: int) -> pd.DataFrame:
-    """复权收盘价表（行 = 日期，列 = 标的）。盘中运行时去掉当天还没走完的那根日线。"""
+def latest_closes(broker: Broker, symbols: list[str], days: int, save: bool = False) -> pd.DataFrame:
+    """复权收盘价表（行 = 日期，列 = 标的）。盘中运行时去掉当天还没走完的那根日线。
+    save：顺便把下载到的日线存到 data/bars/，给窗口程序画“近 1 年 K 线”（不需要额外的盈透请求）。"""
     closes = {}
+    now = datetime.now(NEW_YORK)
+    unfinished = now.strftime("%Y-%m-%d") if now.time() < time(16, 15) else None  # 盘中：当天的日线还没走完
     for symbol in symbols:
         bars = broker.history(symbol, days)
         if not bars:
@@ -63,10 +66,17 @@ def latest_closes(broker: Broker, symbols: list[str], days: int) -> pd.DataFrame
                              f"上登录，占用了行情（盈透错误 162）。退出实盘登录后，晚上 20:00 会自动补跑，也可以手动运行 run.py")
         df = pd.DataFrame([vars(b) for b in bars])
         df.index = pd.to_datetime(df.pop("date"))
-        closes[symbol] = clean_prices(df, symbol)["close"]  # 修正偶尔漏掉的拆股复权
+        cleaned = clean_prices(df, symbol)  # 修正偶尔漏掉的拆股复权
+        closes[symbol] = cleaned["close"]
+        if save:
+            try:
+                records.save_recent_bars(symbol, [{"date": d.strftime("%Y-%m-%d"), **row}
+                                                  for d, row in cleaned.to_dict("index").items()
+                                                  if d.strftime("%Y-%m-%d") != unfinished])
+            except Exception as e:  # 只影响窗口程序的 K 线图，不影响交易
+                log.warning("保存 %s 的日线到 data/bars/ 失败：%s", symbol, e)
     # 场外股票（如 XIACY）偶尔有一两天没有成交：沿用前一天收盘价（最多 3 天），再去掉仍有缺失的日期
     table = pd.DataFrame(closes).sort_index().ffill(limit=3).dropna()
-    now = datetime.now(NEW_YORK)
     if table.index[-1].date() == now.date() and now.time() < time(16, 15):
         log.warning("美股还没收盘（纽约时间 %s），去掉今天未完成的日线，用昨天的收盘价算信号", now.strftime("%H:%M"))
         table = table.iloc[:-1]
@@ -162,7 +172,8 @@ def run(cfg: dict, trade: bool) -> None:
         symbols = strategy.symbols(params)
 
         # 1. 信号
-        closes = latest_closes(broker, strategy.data_symbols(params), strategy.history_days(params))
+        closes = latest_closes(broker, strategy.data_symbols(params), strategy.history_days(params),
+                               save=cfg["mode"] in ("paper", "live"))  # dryrun 的价格是随机生成的，不保存
         weights, info = strategy.target_weights(closes, params, economy_signal(cfg, params, closes.index))
         log_signal(params, weights, info)
         prices = closes.iloc[-1].to_dict()

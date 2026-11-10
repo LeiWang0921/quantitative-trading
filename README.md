@@ -67,6 +67,7 @@ data/macro/              FRED 和弗伦奇数据
 data/dryrun_state.json   dryrun 的本地状态
 data/last_run.json       最近一次 run.py 的决策：排名、打分、目标权重、持仓、下单情况
 data/nav_history.csv     每次运行时的账户净值（窗口程序画净值曲线）
+data/bars/                每次运行时下载的最近约 800 天复权日线（窗口程序右键“近 1 年 K 线”用，每天自动更新）
 data/symbol_names.json   代码 → 公司名的缓存
 data/us_symbols.csv      全部美股和 ETF 的代码、名称、行业、市值（tools/update_symbols.py 生成）
 results/                 回测和研究的结果（CSV）

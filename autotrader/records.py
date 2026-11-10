@@ -2,6 +2,7 @@
 
   data/last_run.json    最近一次运行的决策：排名、打分、目标权重、价格、持仓、账户、下单情况
   data/nav_history.csv  每次运行时的账户净值（画净值曲线用）。第一次读取时从 logs/trader.log 补齐以前的记录
+  data/bars/<代码>.csv  每次运行时下载的最近约 800 个交易日的复权日线（窗口程序画“近 1 年 K 线”用），每次整份覆盖
 """
 from __future__ import annotations
 
@@ -10,11 +11,13 @@ import json
 import re
 from datetime import datetime
 
-from .config import DATA_DIR, LOGS_DIR
+from .config import DATA_DIR, HISTORY_DIR, LOGS_DIR
 
 LAST_RUN = DATA_DIR / "last_run.json"
 NAV_HISTORY = DATA_DIR / "nav_history.csv"
 NAV_FIELDS = ["time", "mode", "nav", "currency", "usd_cash", "strategy_usd"]
+BARS_DIR = DATA_DIR / "bars"
+BAR_FIELDS = ["date", "open", "high", "low", "close", "volume"]
 
 # trader.log 里两种写法的净值行（2026-10-19 起的旧格式、2026-10-22 起的“账户：”格式）
 _LOG_NAV = re.compile(r"^(\S+ \S+?),\d+ INFO (?:账户：)?模式=(\w+) .*?净值=([\d.]+) (\w+) 美元现金=([\d.]+)"
@@ -74,3 +77,29 @@ def _backfill_from_log() -> None:
         w = csv.writer(f)
         w.writerow(NAV_FIELDS)
         w.writerows(rows)
+
+
+def save_recent_bars(symbol: str, rows: list[dict]) -> None:
+    """run.py 下载的复权日线（rows：每天一个 {date, open, high, low, close, volume}），整份覆盖 data/bars/<代码>.csv。"""
+    BARS_DIR.mkdir(parents=True, exist_ok=True)
+    path = BARS_DIR / f"{symbol}.csv"
+    tmp = path.with_suffix(".tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=BAR_FIELDS, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    tmp.replace(path)  # 先写临时文件再替换：窗口程序不会读到写了一半的文件
+
+
+def load_recent_bars(symbol: str) -> tuple[list[dict], str]:
+    """窗口程序画 K 线用的日线（按日期升序，数值已转成 float）和数据来源说明。
+    优先用 run.py 每天保存的 data/bars/，没有时用 fetch_data.py 下载的 data/history/（可能不是最新）。"""
+    for path, source in ((BARS_DIR / f"{symbol}.csv", "每天自动运行时更新"),
+                         (HISTORY_DIR / f"{symbol}.csv", "来自 fetch_data.py 下载的历史数据，不会每天更新")):
+        if path.exists():
+            with path.open(newline="", encoding="utf-8") as f:
+                rows = [{"date": r["date"][:10], **{k: float(r[k]) for k in BAR_FIELDS[1:]}}
+                        for r in csv.DictReader(f) if r.get("close")]
+            if rows:
+                return rows, source
+    return [], ""

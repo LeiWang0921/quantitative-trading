@@ -10,12 +10,14 @@ import os
 import sys
 from datetime import datetime
 
-from PySide6.QtCharts import QChart, QChartView, QDateTimeAxis, QLineSeries, QPieSeries, QValueAxis
+from PySide6.QtCharts import (QCandlestickSeries, QCandlestickSet, QCategoryAxis, QChart, QChartView, QDateTimeAxis,
+                              QLineSeries, QPieSeries, QValueAxis)
 from PySide6.QtCore import (QDateTime, QObject, QProcess, QProcessEnvironment, QStringListModel, Qt, QThread, QTimer,
                             Signal, Slot)
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPen
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QCompleter, QFormLayout, QGroupBox,
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QCompleter, QDialog, QFormLayout,
+                               QGroupBox,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
                                QPushButton, QSplitter, QSystemTrayIcon, QTableWidget, QTableWidgetItem, QTabWidget,
                                QTextBrowser, QTextEdit, QVBoxLayout, QWidget)
@@ -65,6 +67,11 @@ def _style_chart(chart: QChart) -> None:
     chart.setBackgroundRoundness(0)
     chart.setTitleBrush(QApplication.palette().windowText())
     chart.legend().setLabelColor(QApplication.palette().windowText().color())
+
+
+def _style_axis(axis) -> None:
+    """坐标轴文字用窗口的文字颜色（浅色背景深色字、深色背景浅色字），保证看得清。"""
+    axis.setLabelsBrush(QApplication.palette().windowText())
 
 
 def _money(x: float | None, digits: int = 0) -> str:
@@ -556,6 +563,7 @@ class MainWindow(QMainWindow):
         menu = QMenu(t)
         row = item.row()
         menu.addAction(f"显示股票详情（{sym}）").triggered.connect(lambda: self.show_symbol_info(sym, row))
+        menu.addAction(f"近 1 年 K 线（{sym}）").triggered.connect(lambda: self.show_kline(sym))
         menu.addSeparator()
         if sym in params["stocks"]:
             menu.addAction(f"从候选池删除 {sym}…").triggered.connect(lambda: self.on_remove(sym))
@@ -590,6 +598,112 @@ class MainWindow(QMainWindow):
         box = QMessageBox(QMessageBox.Information, f"股票详情 - {sym}", f"<table>{html}</table>", QMessageBox.Ok, self)
         box.setTextFormat(Qt.RichText)
         box.exec()
+
+    def show_kline(self, sym: str) -> None:
+        """近 1 年日 K 线 + 200 日均线。数据是 run.py 每次运行时存的 data/bars/（每天更新），没有时用 data/history/。"""
+        rows, source = records.load_recent_bars(sym)
+        if len(rows) < 2:
+            QMessageBox.information(self, f"近 1 年 K 线 - {sym}",
+                                    f"还没有 {sym} 的日线数据。\n\n参与策略的股票在下一次运行 run.py（或点“重新计算排名”）后就有；"
+                                    f"其他股票可以运行 fetch_data.py {sym} 下载。")
+            return
+        closes = [r["close"] for r in rows]
+        ma = {i: sum(closes[i - 199:i + 1]) / 200 for i in range(199, len(rows))}
+        start = max(0, len(rows) - 252)  # 约 1 年的交易日
+        view = rows[start:]
+
+        chart = QChart()
+        _style_chart(chart)
+        chart.legend().setAlignment(Qt.AlignBottom)
+        candles = QCandlestickSeries()
+        candles.setName("日 K（复权）")
+        candles.setIncreasingColor(QColor(GREEN))
+        candles.setDecreasingColor(QColor(RED))
+        candles.setBodyOutlineVisible(False)
+        candles.setCapsVisible(False)
+        candles.setBodyWidth(0.85)
+        candles.setMinimumColumnWidth(1.5)
+        ma_line = QLineSeries()
+        ma_line.setName("200 日均线")
+        ma_line.setPen(QPen(QColor(ORANGE), 1.6))
+        for i, r in enumerate(view, start):
+            ts = QDateTime.fromString(r["date"], "yyyy-MM-dd").toMSecsSinceEpoch()
+            bar = QCandlestickSet(r["open"], r["high"], r["low"], r["close"], ts)
+            color = QColor(GREEN if r["close"] >= r["open"] else RED)
+            bar.setPen(QPen(color, 1))  # 影线和实体同色
+            bar.setBrush(color)
+            candles.append(bar)
+            if i in ma:
+                ma_line.append(ts, ma[i])
+        chart.addSeries(candles)
+        if ma_line.count():
+            chart.addSeries(ma_line)
+        # 横轴：K 线只能挂在日期轴上，但日期轴的刻度是等分的、对不准月初。所以 K 线挂在一条隐藏的日期轴上，
+        # 另放一条范围完全相同的轴只用来显示月份：每个月第一个交易日标一次（1 月带上年份），并画竖线；起止年月写在标题里
+        first_ts = QDateTime.fromString(view[0]["date"], "yyyy-MM-dd").toMSecsSinceEpoch()
+        last_ts = QDateTime.fromString(view[-1]["date"], "yyyy-MM-dd").toMSecsSinceEpoch()
+        day = 86_400_000
+        ax = QDateTimeAxis()
+        ax.setRange(QDateTime.fromMSecsSinceEpoch(first_ts - day), QDateTime.fromMSecsSinceEpoch(last_ts + day))
+        ax.setVisible(False)
+        months = QCategoryAxis()
+        months.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
+        months.setStartValue(first_ts - day)
+        prev_month = view[0]["date"][:7]
+        for r in view[1:]:
+            if r["date"][:7] != prev_month:
+                y, m = int(r["date"][2:4]), int(r["date"][5:7])
+                months.append(f"{y}年{m}月" if m == 1 else f"{m}月",
+                              QDateTime.fromString(r["date"], "yyyy-MM-dd").toMSecsSinceEpoch())
+                prev_month = r["date"][:7]
+        months.setRange(first_ts - day, last_ts + day)
+        guide = QLineSeries()  # 月份轴需要挂一条线才会显示；这条线不画出来、也不进图例
+        guide.append(first_ts - day, view[0]["close"])
+        guide.append(last_ts + day, view[-1]["close"])
+        guide.setPen(QPen(Qt.NoPen))
+        ay = QValueAxis()
+        values = [r["low"] for r in view] + [r["high"] for r in view] + [ma[i] for i in ma if i >= start]
+        lo, hi = min(values), max(values)
+        ay.setRange(lo - (hi - lo) * 0.05, hi + (hi - lo) * 0.05)
+        ay.applyNiceNumbers()  # 刻度取整齐的数（如 60、70、80）
+        ay.setLabelFormat("%.0f" if hi >= 50 else "%.2f")
+        chart.addAxis(ax, Qt.AlignBottom)
+        chart.addAxis(months, Qt.AlignBottom)
+        chart.addAxis(ay, Qt.AlignLeft)
+        for axis in (months, ay):  # 加进图表以后再设颜色，否则会被图表主题覆盖
+            _style_axis(axis)
+        for s in chart.series():
+            s.attachAxis(ax)
+            s.attachAxis(ay)
+        chart.addSeries(guide)
+        guide.attachAxis(months)
+        guide.attachAxis(ay)
+        chart.legend().markers(guide)[0].setVisible(False)
+        e = self.symbol_index.get(sym)
+        names = self.snap["names"] if self.snap else ibdata._load_names()
+        chart.setTitle(f"{sym}  {(e.cn if e and e.cn else '') or names.get(sym, '')}  近 1 年日 K 线"
+                       f"（{view[0]['date'][:7]} 至 {view[-1]['date'][:7]}）")
+
+        last, first = view[-1], view[0]
+        year_hi, year_lo = max(r["high"] for r in view), min(r["low"] for r in view)
+        summary = QLabel(f"最新收盘 <b>{last['close']:.2f}</b>（{last['date']}）　"
+                         f"近 1 年 <b style='color:{GREEN if last['close'] >= first['close'] else RED}'>"
+                         f"{last['close'] / first['close'] - 1:+.1%}</b>　1 年最高 {year_hi:.2f}，最低 {year_lo:.2f}")
+        note = QLabel(f"数据截至 {last['date']}，{source}。价格为复权价（已按分红、拆股调整，早期价格比当时实际成交价略低）。"
+                      "绿色 = 收涨，红色 = 收跌；橙线 = 200 日均线（防守资产就是看它判断趋势）。")
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color:{GREY}")
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"近 1 年 K 线 - {sym}")
+        dlg.setAttribute(Qt.WA_DeleteOnClose)
+        lay = QVBoxLayout(dlg)
+        view_widget = QChartView(chart)
+        view_widget.setRenderHint(QPainter.Antialiasing)
+        lay.addWidget(view_widget, 1)
+        lay.addWidget(summary)
+        lay.addWidget(note)
+        dlg.resize(860, 540)
+        dlg.show()  # 不阻塞主窗口，可以同时打开几只股票对比
 
     def _held(self, sym: str) -> tuple[float, float | None, float]:
         """(持股数, 市值, 挂单净股数)：优先盈透实时数据，连不上时用上次运行记录。"""

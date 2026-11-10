@@ -27,8 +27,10 @@ class RunTestCase(unittest.TestCase):
                 mock.patch.object(run.strategy, "target_weights", return_value=(dict(weights), {})), \
                 mock.patch.object(run, "log_signal"), \
                 mock.patch.object(run.records, "append_nav"), \
+                mock.patch.object(run.records, "save_recent_bars") as bars, \
                 mock.patch.object(run.records, "save_last_run", side_effect=lambda r: saved.update(r)):
             run.run(cfg, trade=trade)
+        self.saved_bars = {c.args[0]: c.args[1] for c in bars.call_args_list}
         self.assertFalse(broker.connected, "运行结束后应断开连接")
         return saved
 
@@ -44,6 +46,38 @@ class TestTargets(RunTestCase):
         broker = FakeBroker(PRICES, cash=100_000)
         self.go(broker, {"AAA": 1.0, "BBB": 0.0, "IEF": 0.0}, make_cfg(cash_reserve=0.02))
         self.assertEqual(broker.orders, [("AAA", 980)])
+
+    def test_recent_bars_saved_for_chart(self):
+        broker = FakeBroker(PRICES, cash=100_000)
+        self.go(broker, {"AAA": 0.5, "BBB": 0.3, "IEF": 0.2})
+        self.assertEqual(set(self.saved_bars), {"AAA", "BBB", "IEF"})
+        rows = self.saved_bars["AAA"]
+        self.assertEqual(len(rows), 600)  # history_days = 最长均线 100 + 500
+        self.assertEqual(set(rows[0]), {"date", "open", "high", "low", "close", "volume"})
+        self.assertEqual(rows[-1]["close"], 100.0)
+
+    def test_unfinished_bar_not_saved(self):
+        # 盘中运行：当天那根还没走完的日线不保存（K 线图上的“最新收盘”必须是真的收盘价）
+        from datetime import datetime as real_dt
+        broker = FakeBroker(PRICES, cash=100_000)
+        last_day = broker.daily_bars("AAA", 600)[-1].date
+        fake_now = real_dt.fromisoformat(last_day + " 11:00").replace(tzinfo=run.NEW_YORK)
+        with mock.patch.object(run, "datetime", wraps=real_dt) as dt:
+            dt.now.return_value = fake_now
+            self.go(broker, {"AAA": 0.5, "BBB": 0.3, "IEF": 0.2})
+        self.assertEqual(len(self.saved_bars["AAA"]), 599)
+        self.assertNotEqual(self.saved_bars["AAA"][-1]["date"], last_day)
+
+    def test_bar_saving_failure_does_not_stop_trading(self):
+        broker = FakeBroker(PRICES, cash=100_000)
+        with mock.patch.object(run.records, "save_recent_bars", side_effect=OSError("disk full")):
+            cfg = make_cfg()
+            with mock.patch.object(run, "make_broker", return_value=broker), \
+                    mock.patch.object(run.strategy, "target_weights", return_value=({"AAA": 0.5, "BBB": 0.3, "IEF": 0.2}, {})), \
+                    mock.patch.object(run, "log_signal"), mock.patch.object(run.records, "append_nav"), \
+                    mock.patch.object(run.records, "save_last_run"):
+                run.run(cfg, trade=True)
+        self.assertEqual(len(broker.orders), 3)
 
     def test_never_spends_more_than_cash(self):
         broker = FakeBroker(PRICES, cash=100_000)
