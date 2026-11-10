@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import os
 import re
 import socket
 import subprocess
@@ -16,7 +17,10 @@ from pathlib import Path
 from ..config import DATA_DIR, LOGS_DIR, ROOT
 
 TASK_NAME = "QuantTrading-DailyRun"
-GATEWAY_GLOB = "Jts/ibgateway/*/ibgateway.exe"
+# IB Gateway 可能的安装位置：默认安装是 C:\Jts\ibgateway\<版本号>\；指定目录安装（如 china-pc 的 D:\Jts\ibgateway）
+# 没有版本号这一层；按用户安装时在 %LOCALAPPDATA%\Programs\ibgateway
+GATEWAY_GLOBS = ["Jts/ibgateway/*/ibgateway.exe", "Jts/ibgateway/ibgateway.exe"]
+GATEWAY_DRIVES = ["C:/", "D:/", "E:/"]
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # 用 pythonw 启动时，调用命令行工具不弹黑窗口
 
 
@@ -45,7 +49,12 @@ def port_open(host: str, port: int, timeout: float = 1.0) -> bool:
 
 
 def gateway_installs() -> list[Path]:
-    return sorted(Path("C:/").glob(GATEWAY_GLOB))
+    found = {exe for drive in GATEWAY_DRIVES if Path(drive).exists()
+             for pattern in GATEWAY_GLOBS for exe in Path(drive).glob(pattern)}
+    local = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "ibgateway" / "ibgateway.exe"
+    if local.exists():
+        found.add(local)
+    return sorted(found)
 
 
 def gateway_running() -> bool:
@@ -139,7 +148,7 @@ def run_all(cfg: dict | None) -> list[Check]:
     # IB Gateway
     installs = gateway_installs()
     checks.append(Check("IB Gateway 已安装", bool(installs),
-                        "、".join(str(p.parent) for p in installs) if installs else "没有找到 C:\\Jts\\ibgateway",
+                        "、".join(str(p.parent) for p in installs) if installs else "在 C:\\Jts、D:\\Jts 等常见位置都没有找到",
                         "从 interactivebrokers.com 下载 IB Gateway（Stable 版）并安装"))
     running = gateway_running()
     checks.append(Check("IB Gateway 正在运行", running, "进程 ibgateway.exe 在运行" if running else "没有运行",
