@@ -24,13 +24,13 @@ vol_lookback = 20       # 用最近多少个交易日估计波动率
 # 留 cash_reserve 的现金不投，应对次日开盘跳空和手续费（现金账户余额不够会被拒单）
 cash_reserve = 0.02
 # 切换策略时要清仓的旧持仓（不属于当前策略的标的）。清完以后可以留空
-exit_symbols = ["SPY"]
+exit_symbols = ["SPY", "TSLA"]
 
 [strategy.sleeves]      # 方案 B2（2026-10-23 起）：个股为主 + 美债/黄金防守
 # 候选股（数量不限，随时可以增减）：苹果 英伟达 亚马逊 可口可乐 摩根大通 百胜中国 网易 谷歌(A类股)
 #   Verizon(美国最大的电信运营商) 拼多多 网飞 迪士尼
 # 增减候选股直接改这里，然后运行一次 fetch_data.py：持有数量不变，每只的满额不会被摊薄
-stocks = ["AAPL", "NVDA", "AMZN", "KO", "JPM", "YUMC", "NTES", "GOOGL", "VZ", "PDD", "NFLX", "DIS", "TSLA"]
+stocks = ["AAPL", "NVDA", "AMZN", "KO", "JPM", "YUMC", "NTES", "GOOGL", "VZ", "PDD", "NFLX", "DIS"]
 max_holdings = 7        # 最多持有 7 只：每天按“满额比例”排名，持有前 7 只，每只满额 70% / 7 = 10%
 rank_buffer = "auto"    # 排名缓冲：已持有的股票跌出前 7 + 缓冲 名才换掉。"auto" = 候选数 ÷ 4（12 只 → 3，即跌出前 10 名才换）
 stock_share = 0.70      # 个股部分共占 70%
