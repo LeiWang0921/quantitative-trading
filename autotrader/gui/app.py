@@ -224,9 +224,11 @@ class MainWindow(QMainWindow):
         top.addWidget(refresh)
         # 时钟（本机时间，24 小时制，精确到秒）。每 0.25 秒检查一次，秒数变了才改文字，跳秒准而且不费资源
         self.clock = QLabel()
-        self.clock.setFont(QFont("Consolas", 13, QFont.Bold))  # 等宽数字：跳秒时宽度不变，不会左右抖动
         self.clock.setToolTip("本机时间")
-        top.addSpacing(16)
+        # 和旁边的文字同一字体字号；固定宽度，跳秒时不会挤动左边的控件
+        self.clock.setMinimumWidth(self.clock.fontMetrics().horizontalAdvance("00:00:00") + 4)
+        self.clock.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        top.addSpacing(12)
         top.addWidget(self.clock)
         self._tick()
         clock_timer = QTimer(self)
@@ -615,7 +617,8 @@ class MainWindow(QMainWindow):
         box.exec()
 
     def show_kline(self, sym: str) -> None:
-        """近 1 年日 K 线 + 200 日均线。数据是 run.py 每次运行时存的 data/bars/（每天更新），没有时用 data/history/。"""
+        """近 1 年日 K 线 + 策略用的均线（个股 5 条，防守资产 1 条）。
+        数据是 run.py 每次运行时存的 data/bars/（每天更新），没有时用 data/history/。"""
         rows, source = records.load_recent_bars(sym)
         if len(rows) < 2:
             QMessageBox.information(self, f"近 1 年 K 线 - {sym}",
@@ -623,8 +626,19 @@ class MainWindow(QMainWindow):
                                     f"其他股票可以运行 fetch_data.py {sym} 下载。")
             return
         closes = [r["close"] for r in rows]
-        ma = {i: sum(closes[i - 199:i + 1]) / 200 for i in range(199, len(rows))}
         start = max(0, len(rows) - 252)  # 约 1 年的交易日
+        # 均线：个股画策略的 5 条（trend_windows，图例写上权重）；防守资产只看 200 日均线（defense_trend_window）
+        params = strategy.load(self.cfg)
+        is_defense = sym in params.get("defense", [])
+        if is_defense:
+            lines = [(params.get("defense_trend_window", 200), None)]
+        else:
+            ws = list(params.get("trend_windows", [100, 150, 200, 250, 300]))
+            wt = params.get("trend_weights") or [1 / len(ws)] * len(ws)
+            lines = list(zip(ws, wt))
+        mas = []  # [(窗口, 权重, {行号: 均线值})]
+        for n, w in lines:
+            mas.append((n, w, {i: sum(closes[i - n + 1:i + 1]) / n for i in range(n - 1, len(rows))}))
         view = rows[start:]
 
         chart = QChart()
@@ -638,9 +652,23 @@ class MainWindow(QMainWindow):
         candles.setCapsVisible(False)
         candles.setBodyWidth(0.85)
         candles.setMinimumColumnWidth(1.5)
-        ma_line = QLineSeries()
-        ma_line.setName("200 日均线")
-        ma_line.setPen(QPen(QColor(ORANGE), 1.6))
+        # 均线配色用 Okabe-Ito 色盲友好色，避开 K 线的红绿；线型也各不相同，只看形状也能区分。权重越大线越粗
+        styles = [("#56B4E9", Qt.DotLine), ("#CC79A7", Qt.DashDotLine), ("#E69F00", Qt.DashLine),
+                  (QApplication.palette().windowText().color().name(), Qt.SolidLine),
+                  ("#F0E442" if DARK else "#0072B2", Qt.DashDotDotLine)]
+        ma_series = []
+        for k, (n, w, _) in enumerate(mas):
+            line = QLineSeries()
+            if w is None:
+                line.setName(f"{n} 日均线（防守资产看它判断趋势）")
+                pen = QPen(QColor("#E69F00"), 1.8)
+            else:
+                color, style = styles[k % len(styles)]
+                line.setName(f"{n} 日均线")
+                pen = QPen(QColor(color), 1.2 + 2.2 * w)
+                pen.setStyle(style)
+            line.setPen(pen)
+            ma_series.append(line)
         for i, r in enumerate(view, start):
             ts = QDateTime.fromString(r["date"], "yyyy-MM-dd").toMSecsSinceEpoch()
             bar = QCandlestickSet(r["open"], r["high"], r["low"], r["close"], ts)
@@ -648,11 +676,13 @@ class MainWindow(QMainWindow):
             bar.setPen(QPen(color, 1))  # 影线和实体同色
             bar.setBrush(color)
             candles.append(bar)
-            if i in ma:
-                ma_line.append(ts, ma[i])
+            for line, (_, _, ma) in zip(ma_series, mas):
+                if i in ma:
+                    line.append(ts, ma[i])
         chart.addSeries(candles)
-        if ma_line.count():
-            chart.addSeries(ma_line)
+        for line in ma_series:
+            if line.count():
+                chart.addSeries(line)
         # 横轴：K 线只能挂在日期轴上，但日期轴的刻度是等分的、对不准月初。所以 K 线挂在一条隐藏的日期轴上，
         # 另放一条范围完全相同的轴只用来显示月份：每个月第一个交易日标一次（1 月带上年份），并画竖线；起止年月写在标题里
         first_ts = QDateTime.fromString(view[0]["date"], "yyyy-MM-dd").toMSecsSinceEpoch()
@@ -677,7 +707,8 @@ class MainWindow(QMainWindow):
         guide.append(last_ts + day, view[-1]["close"])
         guide.setPen(QPen(Qt.NoPen))
         ay = QValueAxis()
-        values = [r["low"] for r in view] + [r["high"] for r in view] + [ma[i] for i in ma if i >= start]
+        values = ([r["low"] for r in view] + [r["high"] for r in view]
+                  + [v for _, _, ma in mas for i, v in ma.items() if i >= start])
         lo, hi = min(values), max(values)
         ay.setRange(lo - (hi - lo) * 0.05, hi + (hi - lo) * 0.05)
         ay.applyNiceNumbers()  # 刻度取整齐的数（如 60、70、80）
@@ -705,7 +736,9 @@ class MainWindow(QMainWindow):
                          f"近 1 年 <b style='color:{GREEN if last['close'] >= first['close'] else RED}'>"
                          f"{last['close'] / first['close'] - 1:+.1%}</b>　1 年最高 {year_hi:.2f}，最低 {year_lo:.2f}")
         note = QLabel(f"数据截至 {last['date']}，{source}。价格为复权价（已按分红、拆股调整，早期价格比当时实际成交价略低）。"
-                      "绿色 = 收涨，红色 = 收跌；橙线 = 200 日均线（防守资产就是看它判断趋势）。")
+                      "绿色 = 收涨，红色 = 收跌。"
+                      + ("防守资产只看 200 日均线：价格在它之上才持有。" if is_defense else
+                         "均线是策略算趋势用的 5 条：价格在各条均线之上的加权比例就是趋势信号，权重越大的线画得越粗。"))
         note.setWordWrap(True)
         note.setStyleSheet(f"color:{GREY}")
         dlg = QDialog(self)
