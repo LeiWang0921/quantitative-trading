@@ -75,6 +75,13 @@ def _pct(x: float | None, digits: int = 1) -> str:
     return "" if x is None else f"{x * 100:.{digits}f}%"
 
 
+def _cap(x: float) -> str:
+    """市值：3.2 万亿美元 / 850 亿美元；没有数据（ETF、OTC）返回空。"""
+    if not x:
+        return ""
+    return f"{x / 1e12:.2f} 万亿美元" if x >= 1e12 else f"{x / 1e8:,.0f} 亿美元"
+
+
 def _mtime(path) -> float:
     try:
         return path.stat().st_mtime
@@ -263,6 +270,8 @@ class MainWindow(QMainWindow):
                                   "实际占比", "股数", "市值 USD", "成本价", "浮动盈亏 USD", "盈亏%"])
         self.pool_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.pool_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.pool_table.setContextMenuPolicy(Qt.CustomContextMenu)  # 右键菜单：删除候选股
+        self.pool_table.customContextMenuRequested.connect(self.on_pool_menu)
         split.addWidget(self.pool_table)
 
         # 右侧上下两块：资金分布饼图 + 净值曲线（中间的分隔条可以拖动）
@@ -534,6 +543,105 @@ class MainWindow(QMainWindow):
                               f"已加入 {sym}；历史数据" + ("已下载到 data/history/" if code == 0 else
                                                        f"下载失败（不影响交易）：{out[-200:]}")))
 
+    # ---------- 右键菜单 ----------
+    def on_pool_menu(self, pos) -> None:
+        t = self.pool_table
+        item = t.itemAt(pos)
+        if item is None or t.item(item.row(), 1) is None:
+            return
+        sym = t.item(item.row(), 1).text()
+        params = strategy.load(self.cfg)
+        if params["kind"] != "sleeves" or sym in ("", "USD", "合计"):
+            return
+        menu = QMenu(t)
+        row = item.row()
+        menu.addAction(f"显示股票详情（{sym}）").triggered.connect(lambda: self.show_symbol_info(sym, row))
+        menu.addSeparator()
+        if sym in params["stocks"]:
+            menu.addAction(f"从候选池删除 {sym}…").triggered.connect(lambda: self.on_remove(sym))
+        elif sym in params["defense"]:
+            menu.addAction(f"{sym} 是防守资产，不能在这里删除（在 config.toml 的 defense 里修改）").setEnabled(False)
+        else:
+            menu.addAction(f"{sym} 不属于当前策略" + ("，下次运行会全部卖出" if sym in strategy.exit_symbols(params)
+                                                 else "")).setEnabled(False)
+        menu.exec(t.viewport().mapToGlobal(pos))
+
+    def show_symbol_info(self, sym: str, row: int) -> None:
+        """股票详情：和“加入候选股”搜索提示同一份离线资料（symbols.py），外加它在当前策略里的状态。"""
+        e = self.symbol_index.get(sym)
+        names = self.snap["names"] if self.snap else ibdata._load_names()
+        cell = lambda c: (self.pool_table.item(row, c).text() if self.pool_table.item(row, c) else "")  # noqa: E731
+        rank, status = cell(0), cell(3)
+        fields = [("代码", sym),
+                  ("中文名", e.cn if e else ""),
+                  ("英文名", (e.name if e else "") or names.get(sym, "")),
+                  ("行业", e.sector if e else ""),
+                  ("类型", ("ETF" if e.etf else "股票") if e and (e.name or e.exchange) else ""),
+                  ("交易所", e.exchange if e else ""),
+                  ("市值", _cap(e.market_cap) if e else ""),
+                  ("国家/地区", e.country if e else ""),
+                  ("简介", e.note if e else ""),
+                  ("在本策略中", (f"第 {rank} 名，" if rank else "") + status)]
+        html = "".join(f"<tr><td style='color:{GREY}; padding-right:12px'>{k}</td><td>{v}</td></tr>"
+                       for k, v in fields if v)
+        if not e or not (e.name or e.cn):
+            html += (f"<tr><td colspan='2' style='color:{GREY}'><br>离线资料里没有这只股票的详细信息。"
+                     "可以运行 tools\\update_symbols.py 更新美股代码列表。</td></tr>")
+        box = QMessageBox(QMessageBox.Information, f"股票详情 - {sym}", f"<table>{html}</table>", QMessageBox.Ok, self)
+        box.setTextFormat(Qt.RichText)
+        box.exec()
+
+    def _held(self, sym: str) -> tuple[float, float | None, float]:
+        """(持股数, 市值, 挂单净股数)：优先盈透实时数据，连不上时用上次运行记录。"""
+        if self.snap:
+            h = next((p for p in self.snap["portfolio"] if p["symbol"] == sym and p["sec_type"] == "STK"), None)
+            pend = sum(o["qty"] if o["action"] == "BUY" else -o["qty"] for o in self.snap["orders"] if o["symbol"] == sym)
+            return (h["qty"], h["value"], pend) if h else (0, None, pend)
+        if self.last:
+            qty = self.last.get("positions", {}).get(sym, 0)
+            price = self.last.get("prices", {}).get(sym)
+            return qty, qty * price if price else None, self.last.get("pending", {}).get(sym, 0)
+        return 0, None, 0
+
+    def on_remove(self, sym: str) -> None:
+        params = strategy.load(self.cfg)
+        stocks = params["stocks"]
+        if len(stocks) <= 1:
+            self.pool_status.setText(f"<span style='color:{RED}'>候选池里至少要留一只股票</span>")
+            return
+        names = self.snap["names"] if self.snap else ibdata._load_names()
+        n, cap = len(stocks) - 1, params.get("max_holdings") or len(stocks)
+        qty, value, pend = self._held(sym)
+        title = f"{sym}（{names[sym]}）" if names.get(sym) else sym
+        lines = [f"从候选池删除 {title}？", "",
+                 f"删除后候选股变为 {n} 只。"]
+        if n <= cap:
+            lines.append(f"候选股不多于持有上限 {cap} 只，之后会全部持有，每只的满额变为 "
+                         f"{params['stock_share'] / n:.1%}（现在是 {params['stock_share'] / min(cap, len(stocks)):.1%}）。")
+        if qty or pend:
+            held = f"持有 {qty:,.0f} 股" + (f"（市值约 {value:,.0f} USD）" if value else "")
+            held += f"，另有挂单 {pend:+,.0f} 股" if pend else ""
+            lines.append(f"\n你现在{held}。删除后它会加入清仓名单（exit_symbols），下一次运行 run.py 时全部卖出。")
+        else:
+            lines.append("\n现在没有持仓，删除不会产生交易。")
+        lines.append("\nconfig.toml 会先备份为 config.toml.bak。")
+        box = QMessageBox(QMessageBox.Warning if qty or pend else QMessageBox.Question, "删除候选股", "\n".join(lines),
+                          QMessageBox.Yes | QMessageBox.No, self)
+        box.setDefaultButton(QMessageBox.No)
+        box.exec()
+        if box.standardButton(box.clickedButton()) != QMessageBox.Yes:
+            self.pool_status.setText(f"已取消删除 {sym}")
+            return
+        try:
+            config_edit.remove_candidate(sym)
+        except Exception as e:
+            self.pool_status.setText(f"<span style='color:{RED}'>写入 config.toml 失败：{e}</span>")
+            return
+        note = "，下次运行时卖出现有持仓" if qty or pend else ""
+        self.pool_status.setText(f"<span style='color:{GREEN}'>已从候选池删除 {sym}{note}"
+                                 "（config.toml 已备份为 config.toml.bak）</span>")
+        self.refresh_files(force=True)
+
     # ---------- 按钮 ----------
     def on_symbol_typed(self, text: str) -> None:
         params = strategy.load(self.cfg)
@@ -742,8 +850,10 @@ class MainWindow(QMainWindow):
             trend = "" if not a else ("向上" if a.get("trend") else "向下（留现金）")
             rows.append((["", s, names.get(s, ""), "防守", trend, _pct(a.get("vol")), "",
                           _pct(weights.get(s)) if s in weights else ""] + holding_cols(s), BG_DEFENSE))
+        exiting = set(strategy.exit_symbols(params)) if params["kind"] == "sleeves" else set()
         for s in others:
-            rows.append((["", s, names.get(s, ""), "不属于当前策略", "", "", "", ""] + holding_cols(s), BG_OTHER))
+            status = "不属于当前策略，下次运行卖出" if s in exiting else "不属于当前策略"
+            rows.append((["", s, names.get(s, ""), status, "", "", "", ""] + holding_cols(s), BG_OTHER))
         target_cash = 1 - sum(weights.values()) if weights else None
         rows.append((["", "USD", "美元现金", "现金", "", "", "", _pct(target_cash), _pct(usd_cash / investable),
                       "", _money(usd_cash), "", "", ""], BG_CASH))
