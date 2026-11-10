@@ -200,6 +200,11 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(200, self.request_checks)
         QTimer.singleShot(400, self.request_snapshot)
 
+    def _tick(self) -> None:
+        now = datetime.now().strftime("%H:%M:%S")
+        if self.clock.text() != now:
+            self.clock.setText(now)
+
     # ---------- 界面 ----------
     def _build_ui(self) -> None:
         central = QWidget()
@@ -217,6 +222,16 @@ class MainWindow(QMainWindow):
         top.addStretch()
         top.addWidget(self.updated_label)
         top.addWidget(refresh)
+        # 时钟（本机时间，24 小时制，精确到秒）。每 0.25 秒检查一次，秒数变了才改文字，跳秒准而且不费资源
+        self.clock = QLabel()
+        self.clock.setFont(QFont("Consolas", 13, QFont.Bold))  # 等宽数字：跳秒时宽度不变，不会左右抖动
+        self.clock.setToolTip("本机时间")
+        top.addSpacing(16)
+        top.addWidget(self.clock)
+        self._tick()
+        clock_timer = QTimer(self)
+        clock_timer.timeout.connect(self._tick)
+        clock_timer.start(250)
         root.addLayout(top)
 
         self.tabs = QTabWidget()
