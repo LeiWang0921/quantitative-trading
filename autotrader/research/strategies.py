@@ -220,25 +220,32 @@ def trend_strength(close: pd.Series, windows=(100, 150, 200, 250, 300), weights=
     return distance / realized_vol(close.pct_change(), vol_lookback)
 
 
-def select_top(score: pd.DataFrame, k: int, buffer: int = 0) -> pd.DataFrame:
+def select_top(score: pd.DataFrame, k: int, buffer: int = 0, eligible: pd.DataFrame | None = None) -> pd.DataFrame:
     """每天按 score 从高到低选出 k 只（score 为 NaN 的不参加），返回 0/1 表。
     缓冲：已经选中的只要排名还在前 k + buffer 名就保留，空出来的名额按排名补上，避免在第 k 名附近来回换。
     缓冲最多取“当天有得分的候选数 - k - 1”，保证排在最后一名的已选股票总能被换掉。
+    eligible（True/False 表，可选）：当天不合格的股票既不能新选入，也不受缓冲保护。sleeves_core 传入“满额比例 > 0”：
+      满额比例为 0 的股票本来就没有仓位，留着它的名额省不了任何交易，却会挡住排在后面、有仓位的股票
+      （2026-11-10 发现：NVDA 满额比例 0、排第 9，YUMC 满额比例 84% 却进不来）。
     逐日回放全部历史，所以结果只取决于价格历史，不需要另外保存“当前持有哪几只”。"""
     s = score.to_numpy(dtype=float)
+    ok_all = (np.ones_like(s, dtype=bool) if eligible is None
+              else eligible.reindex(index=score.index, columns=score.columns).fillna(False).to_numpy(dtype=bool))
     out = np.zeros_like(s)
     held = np.zeros(s.shape[1], dtype=bool)
     for t in range(len(s)):
         valid = ~np.isnan(s[t])
+        ok = valid & ok_all[t]
         b = max(0, min(buffer, int(valid.sum()) - k - 1))
         order = np.argsort(np.where(valid, -s[t], np.inf), kind="stable")   # 得分从高到低
         rank = np.empty(len(order), dtype=int)
         rank[order] = np.arange(len(order))                                 # 0 = 第一名
-        held = held & valid & (rank < k + b)
+        held = held & ok & (rank < k + b)
         for j in order:
             if held.sum() >= k or not valid[j]:
                 break
-            held[j] = True
+            if ok[j]:
+                held[j] = True
         out[t] = held
     return pd.DataFrame(out, index=score.index, columns=score.columns)
 
@@ -292,7 +299,8 @@ def sleeves_core(m: Market, stocks: list[str], defense: list[str], stock_share: 
       每只个股的满额比例 = 多周期趋势信号（0~1，均线按 trend_weights 加权）× min(1, 目标波动 / 这只股票最近 20 日波动)
       候选股不多于 max_holdings（或没设）时：全部持有，每只一份资金 = stock_share / 候选数（方案 B1）
       候选股多于 max_holdings 时：每天按满额比例排名（相同时比趋势强度），持有前 max_holdings 只，
-        每只一份资金 = stock_share / max_holdings；缓冲 rank_buffer 见 select_top（方案 B2）
+        每只一份资金 = stock_share / max_holdings；缓冲 rank_buffer 见 select_top（方案 B2）；
+        满额比例为 0 的股票不占名额，也不受缓冲保护（2026-11-10 起）
       防守部分：每个防守资产 (1 - stock_share) / 防守资产数（例如 30% / 2 = 15%），
         再加上个股没用完的钱（平均分给各防守资产）；防守资产自己低于 200 日均线时，它那一份留作现金。
         defense_vol_target 不为 None 时，防守资产也乘 min(1, 目标 / 自己最近 20 日波动)，缩下来的部分留作现金
@@ -313,7 +321,7 @@ def sleeves_core(m: Market, stocks: list[str], defense: list[str], stock_share: 
     if k < len(stocks):
         strength = pd.DataFrame({s: trend_strength(m.close[s], windows, trend_weights) for s in stocks})
         score = size + 1e-4 * strength.clip(-50, 50).where(size.notna())
-        chosen = select_top(score, k, rank_buffer)
+        chosen = select_top(score, k, rank_buffer, eligible=size > 0)  # 满额比例为 0 的不占名额、不受缓冲保护
         ready = score.notna().any(axis=1)                       # 预热期（还没有任何股票有信号）保持 NaN
         held = size.where(chosen > 0, 0.0).where(ready)
     else:

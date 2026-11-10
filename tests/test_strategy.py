@@ -40,6 +40,13 @@ class TestSleeves(unittest.TestCase):
         self.assertTrue(all(v >= 0 for v in w.values()), w)
         self.assertLessEqual(sum(w.values()), 1 + 1e-9)
 
+    def test_chosen_stocks_all_have_positive_size(self):
+        # 一半上涨、一半下跌：入选名单里不应有满额比例为 0 的股票
+        w, info = self.weights(self.stocks[:5] + ["IEF", "GLD", "SPY"])
+        for s in self.stocks:
+            if info["assets"][s]["chosen"]:
+                self.assertGreater(info["assets"][s]["size"], 0, s)
+
     def test_holds_at_most_max_holdings(self):
         w, info = self.weights(self.stocks + ["IEF", "GLD", "SPY"])  # 全部上涨
         k = strategy.max_holdings(self.params)
@@ -69,6 +76,36 @@ class TestSleeves(unittest.TestCase):
         closes = synthetic_closes(self.params, self.stocks, days=200)
         with self.assertRaises(ValueError):
             strategy.target_weights(closes, self.params)
+
+
+class TestSelectTop(unittest.TestCase):
+    """排名 + 缓冲（research/strategies.select_top）。"""
+
+    def pick(self, rows: list[list[float]], k: int, buffer: int, eligible_from_score: bool = True) -> list[list[str]]:
+        from autotrader.research.strategies import select_top
+        cols = list("ABCDE")
+        score = pd.DataFrame(rows, columns=cols, index=pd.bdate_range("2026-01-01", periods=len(rows)))
+        chosen = select_top(score, k, buffer, eligible=score > 0 if eligible_from_score else None)
+        return [[c for c in cols if chosen.iloc[i][c]] for i in range(len(rows))]
+
+    def test_buffer_keeps_positive_holding(self):
+        # 第 1 天选 A、B；第 2 天 B 掉到第 3 名，但还在前 2 + 1 名内，保留
+        self.assertEqual(self.pick([[0.9, 0.8, 0.7, 0.1, 0.0], [0.9, 0.6, 0.7, 0.1, 0.0]], k=2, buffer=1),
+                         [["A", "B"], ["A", "B"]])
+
+    def test_zero_size_holding_loses_its_slot(self):
+        # 第 2 天 B 的满额比例变成 0：即使排名还在缓冲范围内，也要让出名额给 C
+        self.assertEqual(self.pick([[0.9, 0.8, 0.7, 0.0, 0.0], [0.9, 0.0, 0.7, 0.0, 0.0]], k=2, buffer=2),
+                         [["A", "B"], ["A", "C"]])
+
+    def test_old_rule_kept_zero_size_holding(self):
+        # 对照：不传 eligible（旧规则）时，满额比例为 0 的 B 靠缓冲留下，挡住了 C
+        self.assertEqual(self.pick([[0.9, 0.8, 0.7, 0.0, 0.0], [0.9, 0.0, 0.7, 0.0, 0.0]], k=2, buffer=2,
+                                   eligible_from_score=False), [["A", "B"], ["A", "B"]])
+
+    def test_zero_size_stocks_never_fill_slots(self):
+        # 只有一只有分数：另一个名额空着（反正 0 分的股票仓位也是 0）
+        self.assertEqual(self.pick([[0.5, 0.0, 0.0, 0.0, 0.0]], k=2, buffer=1), [["A"]])
 
 
 class TestParams(unittest.TestCase):

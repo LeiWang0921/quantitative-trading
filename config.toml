@@ -33,6 +33,7 @@ exit_symbols = ["SPY", "TSLA"]
 stocks = ["AAPL", "NVDA", "AMZN", "KO", "JPM", "YUMC", "NTES", "GOOGL", "VZ", "PDD", "NFLX", "DIS"]
 max_holdings = 7        # 最多持有 7 只：每天按“满额比例”排名，持有前 7 只，每只满额 70% / 7 = 10%
 rank_buffer = "auto"    # 排名缓冲：已持有的股票跌出前 7 + 缓冲 名才换掉。"auto" = 候选数 ÷ 4（12 只 → 3，即跌出前 10 名才换）
+#   满额比例为 0 的股票不受缓冲保护，马上让出名额（2026-11-10 起，代码里的固定规则，见 research/strategies.select_top）
 stock_share = 0.70      # 个股部分共占 70%
 vol_target = 0.20       # 每只个股的满额比例 = 趋势信号 × min(1, 20% / 这只股票最近 20 日年化波动)
 # 5 条均线（trend_windows：100/150/200/250/300 日）的权重。在几百只标普 500 股票上滚动训练的结果偏重 250 日；
