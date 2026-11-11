@@ -290,10 +290,10 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.pool_info)
 
         split = QSplitter(Qt.Horizontal)
-        self.pool_table = _table(["排名", "代码", "名称", "状态", "趋势", "20日波动", "满额比例", "目标占比",
+        self.pool_table = _table(["排名", "代码", "状态", "趋势", "20日波动", "满额比例", "目标占比",
                                   "实际占比", "股数", "市值 USD", "成本价", "浮动盈亏 USD", "盈亏%"])
         self.pool_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.pool_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.pool_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)  # “状态”列占剩余宽度
         self.pool_table.setContextMenuPolicy(Qt.CustomContextMenu)  # 右键菜单：删除候选股
         self.pool_table.customContextMenuRequested.connect(self.on_pool_menu)
         split.addWidget(self.pool_table)
@@ -596,7 +596,7 @@ class MainWindow(QMainWindow):
         e = self.symbol_index.get(sym)
         names = self.snap["names"] if self.snap else ibdata._load_names()
         cell = lambda c: (self.pool_table.item(row, c).text() if self.pool_table.item(row, c) else "")  # noqa: E731
-        rank, status = cell(0), cell(3)
+        rank, status = cell(0), cell(2)
         fields = [("代码", sym),
                   ("中文名", e.cn if e else ""),
                   ("英文名", (e.name if e else "") or names.get(sym, "")),
@@ -998,37 +998,41 @@ class MainWindow(QMainWindow):
         for s in ranked:
             a = assets[s]
             status = "入选" if a["chosen"] else "候选"
-            rows.append(([a["rank"], s, names.get(s, ""), status, _pct(a["trend"], 0), _pct(a["vol"]),
+            rows.append(([a["rank"], s, status, _pct(a["trend"], 0), _pct(a["vol"]),
                           _pct(a["size"], 0), _pct(weights.get(s, 0.0))] + holding_cols(s),
                          BG_CHOSEN if a["chosen"] else ""))
         for s in new:
             if assets:
-                rows.append((["", s, names.get(s, ""), "新加入，下次运行参与排名", "", "", "", ""] + holding_cols(s),
+                rows.append((["", s, "新加入，下次运行参与排名", "", "", "", ""] + holding_cols(s),
                              BG_NEW))
             else:  # 还没有任何排名记录（run.py 还没在新版本下运行过）
-                rows.append((["", s, names.get(s, ""), "暂无排名", "", "", "", ""] + holding_cols(s), ""))
+                rows.append((["", s, "暂无排名", "", "", "", ""] + holding_cols(s), ""))
         for s in defense:
             a = assets.get(s, {})
             trend = "" if not a else ("向上" if a.get("trend") else "向下（留现金）")
-            rows.append((["", s, names.get(s, ""), "防守", trend, _pct(a.get("vol")), "",
+            rows.append((["", s, "防守", trend, _pct(a.get("vol")), "",
                           _pct(weights.get(s)) if s in weights else ""] + holding_cols(s), BG_DEFENSE))
         exiting = set(strategy.exit_symbols(params)) if params["kind"] == "sleeves" else set()
         for s in others:
             status = "不属于当前策略，下次运行卖出" if s in exiting else "不属于当前策略"
-            rows.append((["", s, names.get(s, ""), status, "", "", "", ""] + holding_cols(s), BG_OTHER))
+            rows.append((["", s, status, "", "", "", ""] + holding_cols(s), BG_OTHER))
         target_cash = 1 - sum(weights.values()) if weights else None
-        rows.append((["", "USD", "美元现金", "现金", "", "", "", _pct(target_cash), _pct(usd_cash / investable),
+        rows.append((["", "USD", "美元现金", "", "", "", _pct(target_cash), _pct(usd_cash / investable),
                       "", _money(usd_cash), "", "", ""], BG_CASH))
 
         t = self.pool_table
         t.setRowCount(len(rows) + 1)
         for i, (vals, bg) in enumerate(rows):
-            pnl = vals[12]
-            color = {12: GREEN if not pnl.startswith("-") else RED, 13: GREEN if not vals[13].startswith("-") else RED}
-            _set_row(t, i, vals, bg=bg or None, right_from=4, colors=color if pnl else None)
+            pnl = vals[11]
+            color = {11: GREEN if not pnl.startswith("-") else RED, 12: GREEN if not vals[12].startswith("-") else RED}
+            _set_row(t, i, vals, bg=bg or None, right_from=3, colors=color if pnl else None)
+            # 公司名不单独占一列：鼠标停在代码上显示（完整资料见右键“显示股票详情”）
+            name = "美元现金" if vals[1] == "USD" else names.get(vals[1], "")
+            if name and t.item(i, 1):
+                t.item(i, 1).setToolTip(name)
         total_pnl = sum(h.get("unrealized") or 0 for h in holdings.values())
-        _set_row(t, len(rows), ["", "合计", "策略资产（美元现金 + 持股市值）", "", "", "", "", "", "", "",
-                                _money(equity), "", _money(total_pnl), ""], bold=True, right_from=4)
+        _set_row(t, len(rows), ["", "合计", "策略资产（美元现金 + 持股市值）", "", "", "", "", "", "",
+                                _money(equity), "", _money(total_pnl), ""], bold=True, right_from=3)
 
         # 说明行
         if params["kind"] == "sleeves":
