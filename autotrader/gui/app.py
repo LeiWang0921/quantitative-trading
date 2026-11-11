@@ -8,7 +8,8 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from PySide6.QtCharts import (QCandlestickSeries, QCandlestickSet, QCategoryAxis, QChart, QChartView, QDateTimeAxis,
                               QLineSeries, QPieSeries, QValueAxis)
@@ -89,6 +90,21 @@ STATUS_TIPS = {
     "策略外，待卖出": "不属于当前策略，在清仓名单 exit_symbols 里，下次运行 run.py 时全部卖出",
     "暂无排名": "还没有排名记录：下次运行 run.py 后出现",
 }
+
+
+NEW_YORK = ZoneInfo("America/New_York")  # 美东时间：美股交易所用的时间，夏令时 / 冬令时由时区数据库自动切换
+
+
+def eastern_clock(now: datetime | None = None) -> tuple[str, str]:
+    """右上角时钟：(显示文字, 鼠标提示)。不管本机在哪个时区，都显示美东时间。
+    不写死“UTC−5”：3 月第二个星期日起是夏令时 EDT（UTC−4），11 月第一个星期日起是冬令时 EST（UTC−5），
+    换算交给 zoneinfo（Windows 上的数据来自 tzdata 包）。now 用于测试，需带时区。"""
+    t = (now or datetime.now(timezone.utc)).astimezone(NEW_YORK)
+    zone = "夏令时 EDT，UTC−4" if t.dst() else "冬令时 EST，UTC−5"
+    weekday = "一二三四五六日"[t.weekday()]
+    tip = (f"美东时间（纽约，美股交易所使用的时间）\n{t:%Y-%m-%d} 星期{weekday}，{zone}\n"
+           "美股常规交易 9:30–16:00（美东）；夏令时 / 冬令时自动切换")
+    return f"美东 {t:%H:%M:%S}", tip
 
 
 def _cap(x: float) -> str:
@@ -232,9 +248,10 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(400, self.request_snapshot)
 
     def _tick(self) -> None:
-        now = datetime.now().strftime("%H:%M:%S")
-        if self.clock.text() != now:
-            self.clock.setText(now)
+        text, tip = eastern_clock()
+        if self.clock.text() != text:
+            self.clock.setText(text)
+            self.clock.setToolTip(tip)
 
     # ---------- 界面 ----------
     def _build_ui(self) -> None:
@@ -255,9 +272,8 @@ class MainWindow(QMainWindow):
         top.addWidget(refresh)
         # 时钟（本机时间，24 小时制，精确到秒）。每 0.25 秒检查一次，秒数变了才改文字，跳秒准而且不费资源
         self.clock = QLabel()
-        self.clock.setToolTip("本机时间")
         # 和旁边的文字同一字体字号；固定宽度，跳秒时不会挤动左边的控件
-        self.clock.setMinimumWidth(self.clock.fontMetrics().horizontalAdvance("00:00:00") + 4)
+        self.clock.setMinimumWidth(self.clock.fontMetrics().horizontalAdvance("美东 00:00:00") + 4)
         self.clock.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         top.addSpacing(12)
         top.addWidget(self.clock)
