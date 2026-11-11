@@ -1095,8 +1095,13 @@ class MainWindow(QMainWindow):
                             f"（信号日 {last['signal'].get('date', '?')}）。")
                 dip = last["signal"].get("dip")
                 if dip:
-                    info.append(f"逢跌加仓：{dip['market']} 距 63 日高点 {dip['drawdown'] * 100:+.1f}%，"
-                                + ("已触发" if dip["on"] else f"未触发（阈值 −{dip['threshold'] * 100:.0f}%）") + "。")
+                    if dip.get("triggered_today"):
+                        state = "已触发"
+                    elif dip["on"]:
+                        state = f"维持中（{dip['last_trigger']} 触发，还剩 {dip['days_left']} 个交易日）"
+                    else:
+                        state = f"未触发（阈值 −{dip['threshold'] * 100:.0f}%）"
+                    info.append(f"逢跌加仓：{dip['market']} 距 63 日高点 {dip['drawdown'] * 100:+.1f}%，{state}。")
             else:
                 info.append(f"<span style='color:{ORANGE}'>还没有排名记录：下次 run.py 运行后出现，"
                             "也可以在 Gateway 登录后点“重新计算排名”马上生成（不下单）。</span>")

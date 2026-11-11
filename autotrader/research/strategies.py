@@ -282,11 +282,26 @@ def defensive_core(m: Market, stock: str, bond: str | None = None, target: float
 
 
 def dip_signal(market_close: pd.Series, threshold: float, window: int = 63, guard: int = 300,
-               band: float = 0.01) -> pd.Series:
-    """逢跌加仓的触发（True/False）：大盘在 guard 日均线之上（长期牛市），且比最近 window 日的最高收盘价下跌超过 threshold。"""
+               band: float = 0.01, min_days: int = 0) -> pd.Series:
+    """逢跌加仓的开关（True/False）。
+    触发：大盘在 guard 日均线之上（长期牛市），且比最近 window 日的最高收盘价下跌超过 threshold。
+    min_days > 0 时，最后一次满足触发条件之后，开关至少再维持 min_days 个交易日（含触发当天），
+      即使大盘已经反弹回阈值以内；但大盘跌破 guard 日均线（判断为熊市）时立即关闭。
+      不设最短天数时，大盘一反弹回阈值以内就关闭：2006 年以来开关的中位数只持续 2 天，
+      在阈值附近反复开关，每次关闭都会在反弹刚开始时减仓（2026-11-10 的回测，见报告第 3.6 节）。"""
     drawdown = market_close / market_close.rolling(window).max() - 1
     bull = trend_signal(market_close, guard, band)
-    return ((drawdown <= -threshold) & (bull > 0)).fillna(False)
+    raw = ((drawdown <= -threshold) & (bull > 0)).fillna(False)
+    if min_days <= 0:
+        return raw
+    raw_a, bull_a = raw.to_numpy(), (bull > 0).to_numpy()
+    out = np.zeros(len(raw_a), dtype=bool)
+    last = -10**9
+    for t in range(len(raw_a)):
+        if raw_a[t]:
+            last = t
+        out[t] = raw_a[t] or (t - last < min_days and bull_a[t])
+    return pd.Series(out, index=market_close.index)
 
 
 def sleeves_core(m: Market, stocks: list[str], defense: list[str], stock_share: float = 0.70,
@@ -294,7 +309,7 @@ def sleeves_core(m: Market, stocks: list[str], defense: list[str], stock_share: 
                  defense_n: int = 200, lookback: int | str = 20, trend_weights=None,
                  max_holdings: int | None = None, rank_buffer: int = 0, defense_vol_target: float | None = None,
                  dip_threshold: float | None = None, dip_market: str = "SPY", dip_window: int = 63,
-                 dip_guard: int = 300, detail: bool = False):
+                 dip_guard: int = 300, dip_min_days: int = 0, detail: bool = False):
     """★ 个股为主、美债 / 黄金防守的组合。每天收盘后：
       每只个股的满额比例 = 多周期趋势信号（0~1，均线按 trend_weights 加权）× min(1, 目标波动 / 这只股票最近 20 日波动)
       候选股不多于 max_holdings（或没设）时：全部持有，每只一份资金 = stock_share / 候选数（方案 B1）
@@ -307,14 +322,15 @@ def sleeves_core(m: Market, stocks: list[str], defense: list[str], stock_share: 
         （和股票同一个原则：黄金、国债自己剧烈波动时，常常和股票一起下跌，例如 2008、2020 年 3 月、2026 年初）。
       逢跌加仓（dip_threshold 不为 None 时）：大盘 dip_market 仍在 dip_guard 日均线之上（长期牛市），
         但比最近 dip_window 日的高点下跌超过 dip_threshold 时，自己仍在 dip_guard 日均线之上的股票按满额比例 100% 处理
-        （不因短期均线跌破或波动升高而减仓），押注牛市中的急跌会较快反弹；大盘收复跌幅或跌破长期均线后恢复正常规则。
+        （不因短期均线跌破或波动升高而减仓），押注牛市中的急跌会较快反弹；
+        dip_min_days > 0 时，开关在最后一次触发后至少维持这么多交易日（大盘跌破长期均线时立即关闭），见 dip_signal。
     detail=True 时返回 (目标权重, 满额比例, 排名得分, 是否入选) 四张表，供日志和报告使用。"""
     k = len(stocks) if max_holdings is None else min(max_holdings, len(stocks))
     sleeve = stock_share / k
     size = pd.DataFrame({s: trend_ensemble(m.close[s], windows, band, trend_weights)
                          * vol_weight(m.close_ret[s], target, lookback) for s in stocks})
     if dip_threshold is not None:
-        on = dip_signal(m.close[dip_market], dip_threshold, dip_window, dip_guard, band)
+        on = dip_signal(m.close[dip_market], dip_threshold, dip_window, dip_guard, band, dip_min_days)
         for s in stocks:
             long_ok = trend_signal(m.close[s], dip_guard, band)
             size[s] = size[s].where(~on, np.maximum(size[s], long_ok).where(size[s].notna()))

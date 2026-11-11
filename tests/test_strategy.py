@@ -108,6 +108,42 @@ class TestSelectTop(unittest.TestCase):
         self.assertEqual(self.pick([[0.5, 0.0, 0.0, 0.0, 0.0]], k=2, buffer=1), [["A"]])
 
 
+class TestDipSignal(unittest.TestCase):
+    """逢跌加仓开关（research/strategies.dip_signal）的最短维持天数。"""
+
+    def market(self, tail: list[float]) -> pd.Series:
+        # 先涨 400 天（远在 300 日均线之上，长期牛市），再接上 tail 指定的走势
+        up = list(np.linspace(100, 200, 400))
+        return pd.Series(up + tail, index=pd.bdate_range("2020-01-01", periods=400 + len(tail)))
+
+    def signal(self, s: pd.Series, min_days: int) -> list[bool]:
+        from autotrader.research.strategies import dip_signal
+        return dip_signal(s, 0.08, 63, 300, 0.01, min_days).iloc[400:].tolist()
+
+    def test_without_min_days_switches_off_on_rebound(self):
+        s = self.market([182, 185, 190, 192])  # 跌到 −9%（触发），第二天反弹到 −7.5%
+        self.assertEqual(self.signal(s, 0), [True, False, False, False])
+
+    def test_min_days_keeps_switch_on_through_rebound(self):
+        s = self.market([182, 185, 190, 192, 195])
+        self.assertEqual(self.signal(s, 3), [True, True, True, False, False])  # 触发当天 + 之后 2 天
+
+    def test_new_trigger_restarts_the_count(self):
+        s = self.market([182, 190, 181, 190, 192, 194])  # 第 3 天再次跌破 −8%：从那天重新计算
+        self.assertEqual(self.signal(s, 3), [True, True, True, True, True, False])
+
+    def test_bear_market_ends_it_immediately(self):
+        # 触发后 SPY 继续大跌、跌破 300 日均线：即使还在最短天数内，也立即关闭
+        s = self.market([182] + [120] * 5)
+        out = self.signal(s, 42)
+        self.assertTrue(out[0])
+        self.assertFalse(out[1])
+
+    def test_current_config_uses_min_days(self):
+        p = strategy.load(load_config())
+        self.assertEqual(strategy.sleeves_kwargs(p)["dip_min_days"], int(p.get("dip_min_days", 0)))
+
+
 class TestParams(unittest.TestCase):
     def test_rank_buffer(self):
         p = {"stocks": list("ABCDEFGHIJKL"), "max_holdings": 7, "rank_buffer": "auto"}

@@ -7,7 +7,8 @@
       （候选股不多于 7 只时全部持有，每只 70% / 候选数，即方案 B1）
       防守资产（IEF、GLD）各 15%，加上个股没用完的钱平均分给它们；低于自己 200 日均线时那一份留作现金；
       防守资产也按 min(1, 15% ÷ 自己最近 20 日波动) 缩放（defense_vol_target），缩下来的部分留作现金
-      逢跌加仓（dip_threshold）：SPY 在 300 日均线之上、但比最近 63 日高点跌超 8% 时，
+      逢跌加仓（dip_threshold、dip_min_days）：SPY 在 300 日均线之上、但比最近 63 日高点跌超 8% 时打开，
+      最后一次触发后至少维持 42 个交易日（SPY 跌破 300 日均线时立即结束）；开关打开期间，
       仍在自己 300 日均线之上的股票按满额持有（押注牛市中的急跌会较快反弹）
 
   "spy_ief"（之前的方案）：SPY 仓位 = 趋势信号 × min(1, 10% ÷ SPY 最近 20 日波动)，带申请失业金过滤；
@@ -49,7 +50,8 @@ def sleeves_kwargs(params: dict) -> dict:
                 defense_n=params["defense_trend_window"], lookback=params["vol_lookback"],
                 trend_weights=params.get("trend_weights"), max_holdings=max_holdings(params),
                 rank_buffer=rank_buffer(params), defense_vol_target=params.get("defense_vol_target"),
-                dip_threshold=params.get("dip_threshold") or None, dip_market=params.get("dip_market", "SPY"))
+                dip_threshold=params.get("dip_threshold") or None, dip_market=params.get("dip_market", "SPY"),
+                dip_min_days=int(params.get("dip_min_days", 0)))
 
 
 def load(cfg: dict) -> dict:
@@ -105,10 +107,18 @@ def _sleeves(closes: pd.DataFrame, params: dict) -> tuple[dict[str, float], dict
             "buffer": rank_buffer(params)}
     if params.get("dip_threshold"):
         mk = closes[params.get("dip_market", "SPY")]
+        min_days = int(params.get("dip_min_days", 0))
+        raw = dip_signal(mk, params["dip_threshold"], 63, 300, band)          # 今天是否满足触发条件
+        on = dip_signal(mk, params["dip_threshold"], 63, 300, band, min_days)  # 开关状态（含最短维持天数）
+        hits = [i for i, x in enumerate(raw.to_numpy()) if x]
+        last = hits[-1] if hits else None
         info["dip"] = {"market": params.get("dip_market", "SPY"), "threshold": params["dip_threshold"],
                        "drawdown": float(mk.iloc[-1] / mk.iloc[-63:].max() - 1),
                        "bull": bool(trend_signal(mk, 300, band).iloc[-1] > 0),
-                       "on": bool(dip_signal(mk, params["dip_threshold"], 63, 300, band).iloc[-1])}
+                       "on": bool(on.iloc[-1]), "triggered_today": bool(raw.iloc[-1]), "min_days": min_days,
+                       "last_trigger": closes.index[last].strftime("%Y-%m-%d") if last is not None else None,
+                       # 开关打开时还会至少维持几个交易日（含今天）；大盘跌破 300 日均线会提前结束
+                       "days_left": (min_days - (len(raw) - 1 - last)) if on.iloc[-1] and last is not None else 0}
     for s in params["stocks"]:
         info["assets"][s] = {"trend": float(trend_ensemble(closes[s], windows, band, params.get("trend_weights")).iloc[-1]),
                              "vol": float(realized_vol(rets[s], params["vol_lookback"]).iloc[-1]),

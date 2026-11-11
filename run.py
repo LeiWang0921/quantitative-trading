@@ -125,9 +125,16 @@ def log_signal(params: dict, weights: dict[str, float], info: dict) -> None:
                      weights[s] * 100, params["stock_share"] / k * 100)
         if "dip" in info:
             dp = info["dip"]
+            if dp.get("triggered_today"):
+                state = "触发：长期趋势完好的股票按满额持有" + (
+                    f"，至少维持 {dp['min_days']} 个交易日" if dp.get("min_days") else "")
+            elif dp["on"]:
+                state = (f"维持中：最后一次触发在 {dp['last_trigger']}，还会维持 {dp['days_left']} 个交易日"
+                         "（SPY 跌破 300 日均线会提前结束）")
+            else:
+                state = f"未触发（需要跌超 {dp['threshold']:.0%} 且在长期牛市中）"
             log.info("  逢跌加仓：%s 距最近 63 日高点 %+.1f%%，%s → %s", dp["market"], dp["drawdown"] * 100,
-                     "长期牛市（300 日均线之上）" if dp["bull"] else "跌破 300 日均线",
-                     "触发：长期趋势完好的股票按满额持有" if dp["on"] else f"未触发（需要跌超 {dp['threshold']:.0%} 且在长期牛市中）")
+                     "长期牛市（300 日均线之上）" if dp["bull"] else "跌破 300 日均线", state)
         dvt = params.get("defense_vol_target")
         for d in params["defense"]:
             a = info["assets"][d]
