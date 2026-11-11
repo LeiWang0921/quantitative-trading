@@ -82,6 +82,15 @@ def _pct(x: float | None, digits: int = 1) -> str:
     return "" if x is None else f"{x * 100:.{digits}f}%"
 
 
+# 选股表“状态”列的简短文字 → 鼠标提示里的完整说明
+STATUS_TIPS = {
+    "新加入": "新加入的候选股，下次运行 run.py（或点“重新计算排名”）时参与排名",
+    "策略外": "持有，但不属于当前策略（不在候选股和防守资产里）",
+    "策略外，待卖出": "不属于当前策略，在清仓名单 exit_symbols 里，下次运行 run.py 时全部卖出",
+    "暂无排名": "还没有排名记录：下次运行 run.py 后出现",
+}
+
+
 def _cap(x: float) -> str:
     """市值：3.2 万亿美元 / 850 亿美元；没有数据（ETF、OTC）返回空。"""
     if not x:
@@ -141,8 +150,30 @@ class Worker(QObject):
         self.validate_done.emit(data)
 
 
-def _table(headers: list[str]) -> QTableWidget:
-    t = QTableWidget(0, len(headers))
+class FitTable(QTableWidget):
+    """各列至少和内容一样宽：窗口够宽时把多出的宽度平均分给各列，不够宽时出现横向滚动条（不会把某一列挤没）。
+    填完数据后调用 fit_columns()；窗口大小变化时自动重新分配。"""
+
+    def fit_columns(self) -> None:
+        n = self.columnCount()
+        if not n:
+            return
+        header = self.horizontalHeader()
+        widths = [max(self.sizeHintForColumn(c), header.sectionSizeHint(c)) + 8 for c in range(n)]
+        extra = self.viewport().width() - sum(widths)
+        if extra > 0:
+            widths = [w + extra // n for w in widths]
+            widths[-1] += extra % n
+        for c, w in enumerate(widths):
+            self.setColumnWidth(c, w)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.fit_columns()
+
+
+def _table(headers: list[str], cls: type = QTableWidget) -> QTableWidget:
+    t = cls(0, len(headers))
     t.setHorizontalHeaderLabels(headers)
     t.setEditTriggers(QAbstractItemView.NoEditTriggers)
     t.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -290,10 +321,9 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.pool_info)
 
         split = QSplitter(Qt.Horizontal)
+        # 各列至少按内容定宽（窗口窄时出现横向滚动条，而不是把某一列挤没），窗口宽时多出的宽度平均分给各列
         self.pool_table = _table(["排名", "代码", "状态", "趋势", "20日波动", "满额比例", "目标占比",
-                                  "实际占比", "股数", "市值 USD", "成本价", "浮动盈亏 USD", "盈亏%"])
-        self.pool_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.pool_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)  # “状态”列占剩余宽度
+                                  "实际占比", "股数", "市值 USD", "成本价", "浮动盈亏 USD", "盈亏%"], cls=FitTable)
         self.pool_table.setContextMenuPolicy(Qt.CustomContextMenu)  # 右键菜单：删除候选股
         self.pool_table.customContextMenuRequested.connect(self.on_pool_menu)
         split.addWidget(self.pool_table)
@@ -1003,7 +1033,7 @@ class MainWindow(QMainWindow):
                          BG_CHOSEN if a["chosen"] else ""))
         for s in new:
             if assets:
-                rows.append((["", s, "新加入，下次运行参与排名", "", "", "", ""] + holding_cols(s),
+                rows.append((["", s, "新加入", "", "", "", ""] + holding_cols(s),
                              BG_NEW))
             else:  # 还没有任何排名记录（run.py 还没在新版本下运行过）
                 rows.append((["", s, "暂无排名", "", "", "", ""] + holding_cols(s), ""))
@@ -1014,7 +1044,7 @@ class MainWindow(QMainWindow):
                           _pct(weights.get(s)) if s in weights else ""] + holding_cols(s), BG_DEFENSE))
         exiting = set(strategy.exit_symbols(params)) if params["kind"] == "sleeves" else set()
         for s in others:
-            status = "不属于当前策略，下次运行卖出" if s in exiting else "不属于当前策略"
+            status = "策略外，待卖出" if s in exiting else "策略外"
             rows.append((["", s, status, "", "", "", ""] + holding_cols(s), BG_OTHER))
         target_cash = 1 - sum(weights.values()) if weights else None
         rows.append((["", "USD", "美元现金", "", "", "", _pct(target_cash), _pct(usd_cash / investable),
@@ -1030,9 +1060,15 @@ class MainWindow(QMainWindow):
             name = "美元现金" if vals[1] == "USD" else names.get(vals[1], "")
             if name and t.item(i, 1):
                 t.item(i, 1).setToolTip(name)
+            tip = STATUS_TIPS.get(vals[2])
+            if tip and t.item(i, 2):
+                t.item(i, 2).setToolTip(tip)
         total_pnl = sum(h.get("unrealized") or 0 for h in holdings.values())
-        _set_row(t, len(rows), ["", "合计", "策略资产（美元现金 + 持股市值）", "", "", "", "", "", "",
+        _set_row(t, len(rows), ["", "合计", "策略资产", "", "", "", "", "", "",
                                 _money(equity), "", _money(total_pnl), ""], bold=True, right_from=3)
+        if t.item(len(rows), 2):
+            t.item(len(rows), 2).setToolTip("策略资产 = 美元现金 + 持股市值")
+        t.fit_columns()
 
         # 说明行
         if params["kind"] == "sleeves":
