@@ -146,6 +146,27 @@ Things to know:
 - **One session per username**: if the same IBKR username is logged in somewhere else at the same time (Client Portal in a browser, the mobile app, or TWS), IBKR may give the market data to that session. Historical data requests then fail with **error 162**. Log out of the other session before the scheduled runs.
 - **Client IDs**: the programs connect with these API client IDs: `1` (`run.py`), `11` (`tools\convert_fx.py`), `21` (`fetch_data.py`), `41` (the monitoring window). Do not use the same IDs in other programs connected to the same IB Gateway.
 
+### 5.3 Optional: unattended login with IBC
+
+IBKR makes IB Gateway exit for a full login about once a week, and the daily auto-restart has to be switched on by hand. [IBC](https://github.com/IbcAlpha/IBC) is an open-source tool that starts IB Gateway, fills in the username and password, ticks the paper-account warning, and handles the daily restart and the Sunday full re-login on its own. A paper username normally needs no two-factor confirmation, so this makes the paper setup fully unattended. A live login still needs the phone confirmation once a week.
+
+1. Download `IBCWin-<version>.zip` from the IBC releases page and unzip it, for example to `D:\IBC`.
+2. Edit `StartGateway.bat` (keep it ASCII):
+   - `TWS_MAJOR_VRSN`: the Gateway version without the dot, for example `1050` for 10.50 (Help > About).
+   - `CONFIG`, `IBC_PATH`, `LOG_PATH`: where `config.ini`, IBC and its logs are, for example `D:\IBC\config.ini`, `D:\IBC`, `D:\IBC\Logs`.
+   - `TRADING_MODE=paper`.
+   - `TWS_PATH` and `TWS_SETTINGS_PATH`: IBC expects the program in `<TWS_PATH>\ibgateway\<version>`. A default install (`C:\Jts\ibgateway\1050`) needs `TWS_PATH=C:\Jts`. If Gateway was installed without the version folder (for example to `D:\Jts\ibgateway`), create a directory junction such as `mklink /J D:\IBC\jts\ibgateway\1050 D:\Jts\ibgateway`, then set `TWS_PATH=D:\IBC\jts` and `TWS_SETTINGS_PATH=D:\Jts\ibgateway` so the existing Gateway settings are kept.
+3. Edit `config.ini`:
+   - `IbLoginId=` and `IbPassword=`: your paper username and password. You type these yourself; the password is stored in plain text, so keep the file where only your Windows account can read it (for example remove inherited permissions with `icacls`).
+   - `TradingMode=paper`, `AcceptNonBrokerageAccountWarning=yes`, `ReadOnlyApi=no`, `ExistingSessionDetectedAction=primary`.
+   - `AutoRestartTime=11:30 AM` (daily restart, local time; pick a time away from the scheduled runs).
+   - `ColdRestartTime=15:00` (Sunday full re-login, local time; it must be after 01:00 New York time, which 15:00 Beijing time always is).
+   - `AcceptIncomingConnectionAction=reject` (connections from 127.0.0.1 are trusted by Gateway and not affected).
+4. Close any IB Gateway you started by hand, and create a Task Scheduler task that runs `StartGateway.bat` at logon, with no time limit (`New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero)`). Start it once with `Start-ScheduledTask`.
+5. Windows Firewall may ask whether "Zulu Platform x64 Architecture" (Gateway's bundled Java) may accept connections from public and private networks. Choose **Cancel**: the trading programs connect from the same PC, which the firewall does not block.
+
+Under IBC, Gateway runs as `java.exe` instead of `ibgateway.exe`; the monitoring window recognises both.
+
 ## 6. Configure `config.toml`
 
 All settings are in `config.toml`. The comments in it are in Chinese; the important keys are:

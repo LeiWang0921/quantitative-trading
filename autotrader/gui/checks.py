@@ -57,8 +57,14 @@ def gateway_installs() -> list[Path]:
     return sorted(found)
 
 
-def gateway_running() -> bool:
-    return "ibgateway.exe" in _run(["tasklist", "/FI", "IMAGENAME eq ibgateway.exe", "/NH"]).lower()
+def gateway_running() -> str | None:
+    """Gateway 在运行时返回启动方式（"直接启动" / "IBC 启动"），否则 None。
+    双击图标启动时进程是 ibgateway.exe；用 IBC 自动登录时，Gateway 以 java.exe 运行（命令行里有 ibcalpha）。"""
+    if "ibgateway.exe" in _run(["tasklist", "/FI", "IMAGENAME eq ibgateway.exe", "/NH"]).lower():
+        return "直接启动"
+    ps = ("Get-CimInstance Win32_Process -Filter \"Name='java.exe' or Name='javaw.exe'\" | "
+          "Where-Object { $_.CommandLine -like '*ibcalpha.ibc.IbcGateway*' } | Select-Object -First 1 -ExpandProperty ProcessId")
+    return "IBC 启动" if _run(["powershell", "-NoProfile", "-Command", ps]).strip() else None
 
 
 def scheduled_task() -> dict | None:
@@ -151,8 +157,8 @@ def run_all(cfg: dict | None) -> list[Check]:
                         "、".join(str(p.parent) for p in installs) if installs else "在 C:\\Jts、D:\\Jts 等常见位置都没有找到",
                         "从 interactivebrokers.com 下载 IB Gateway（Stable 版）并安装"))
     running = gateway_running()
-    checks.append(Check("IB Gateway 正在运行", running, "进程 ibgateway.exe 在运行" if running else "没有运行",
-                        "打开 IB Gateway，选 IB API，用模拟账户登录"))
+    checks.append(Check("IB Gateway 正在运行", running is not None, f"在运行（{running}）" if running else "没有运行",
+                        "打开 IB Gateway，选 IB API，用模拟账户登录（用 IBC 时运行 D:\IBC\StartGateway.bat）"))
     if cfg is not None and cfg.get("mode") in ("paper", "live"):
         host = cfg["ibkr"]["host"]
         port = cfg["ibkr"]["live_port" if cfg["mode"] == "live" else "paper_port"]

@@ -133,6 +133,7 @@ dryrun 模式下每运行一次相当于过了一个交易日。
     用本机 Outlook 桌面版发送；手机装 Outlook App 就能收到推送。电脑关机或睡眠时任务不会运行，也就不会有邮件。
   20:00 是补跑：同一天运行两次不会重复下单。手动测试（不下单）：`tools\daily_run.bat --no-trade`。
   - IB Gateway 要设置成“自动重启”（配置 → 设置 → 锁定和退出），否则每天会自动退出；盈透要求每周手动完整登录一次。
+    也可以用开源工具 IBC 自动登录、每日重启、周日自动完整登录（china-pc 上装在 D:\IBC，开机登录 Windows 后由计划任务“IBC-Gateway”启动），见 docs/SETUP.md 第 5.3 节。
   - 暂停：任务计划程序里右键该任务 → 禁用；或 PowerShell：`Disable-ScheduledTask -TaskName QuantTrading-DailyRun`
   - 删除：`Unregister-ScheduledTask -TaskName QuantTrading-DailyRun`
   - 那天电脑关机就跳过，第二天会把仓位调到当天的目标。
