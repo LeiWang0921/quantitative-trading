@@ -240,8 +240,9 @@ The daily run uses Windows Task Scheduler. It calls `tools\daily_run.bat`, which
 | Pacific (Vancouver, Los Angeles) | Monday–Friday | 14:45 | 20:00 |
 | Eastern (Toronto, New York) | Monday–Friday | 16:45 | 21:00 |
 | China (UTC+8) | **Tuesday–Saturday** (the US Friday close is Saturday morning in China) | 06:00 | 08:00 |
+| China (UTC+8), daytime alternative | Monday–Friday | 14:45 | 20:00 |
 
-For China, change `$days` below to `"Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"`.
+For China, either works. With 06:00/08:00, change `$days` below to `"Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"`. The daytime alternative runs in the early morning New York time (01:45/07:00 in winter, 02:45/08:00 in summer): each afternoon processes the previous US trading day's close (Monday afternoon handles Friday), still before the US open at 22:30 (21:30 in summer) Beijing time, and a failure happens while you are awake. Note that when run from China, `$days` stays Monday–Friday for this alternative.
 
 Running a few minutes after the close is fine: the program waits for the day's final bar, and before 16:15 New York time it uses the previous close.
 
