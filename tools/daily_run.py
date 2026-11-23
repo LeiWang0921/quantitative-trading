@@ -5,6 +5,7 @@
   2. 运行 run.py，把它的输出（包括报错）追加到同一个日志
   3. run.py 失败时弹出提醒（最常见的原因是 IB Gateway 没有登录），并发邮件（config.toml 的 [notify]）
   4. 有订单被风控拒绝时发邮件；之前失败、这次补跑成功时也发一封，告诉你已经恢复
+  5. 用 Microsoft Graph 发信时，每次都刷新登录令牌；刷新失败就弹窗提醒重新登录（见 autotrader/notify.py）
 
 同一天运行两次不会重复下单（run.py 会把已经提交的挂单算进去）。
 为什么不直接写在 .bat 里：cmd 读含中文的 .bat 文件时会把行读乱（2026-10-21 起的自动运行因此全部失败），
@@ -68,8 +69,21 @@ def save_state(state: dict) -> None:
     STATE.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
 
+def keep_email_alive() -> None:
+    """每次运行都刷新一次 Microsoft 登录令牌（只在用 Microsoft Graph 发信时）：令牌约 90 天不用就失效，
+    而提醒邮件只在出问题时才发。刷新失败时邮件发不出去，所以改用弹窗提醒重新登录。"""
+    ok, detail = notify.keep_alive()
+    if notify.method() == "graph":
+        with LOG.open("a", encoding="utf-8") as log:
+            log.write(f"邮件提醒：{detail}\n")
+    if not ok:
+        subprocess.run(["msg", getpass.getuser(), "/TIME:21600",
+                        f"量化交易：提醒邮件发不出去了。{detail}"])
+
+
 def main() -> int:
     code, output = run_once(sys.argv[1:])
+    keep_email_alive()
     state = load_state()
     if code != 0:
         subprocess.run(["msg", getpass.getuser(), "/TIME:21600", MESSAGE])

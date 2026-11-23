@@ -173,6 +173,21 @@ def run_all(cfg: dict | None) -> list[Check]:
                             f"（结果 {task['last_result']}）",
                             "在任务计划程序里启用这个任务"))
 
+    # 邮件提醒（只看本地状态，不联网）
+    if cfg is not None:
+        from .. import notify
+        to = cfg.get("notify", {}).get("email", "").strip()
+        if not to:
+            checks.append(Check("邮件提醒", None, "config.toml 的 [notify] email 为空，不发邮件"))
+        elif notify.method() == "graph":
+            checks.append(Check("邮件提醒", True, f"通过 Microsoft Graph 发到 {to}（每次自动运行都会刷新登录令牌）"))
+        elif any(Path(p).exists() for p in (r"C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE",
+                                            r"C:\Program Files (x86)\Microsoft Office\root\Office16\OUTLOOK.EXE")):
+            checks.append(Check("邮件提醒", True, f"通过本机 Outlook 发到 {to}"))
+        else:
+            checks.append(Check("邮件提醒", False, "没有 Microsoft 登录令牌，也没有装经典版 Outlook，提醒邮件发不出去",
+                                ".venv\\Scripts\\python -m autotrader.notify --login"))
+
     # 数据目录
     try:
         DATA_DIR.mkdir(exist_ok=True)

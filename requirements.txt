@@ -1,4 +1,5 @@
 ib_async
+msal                    # 提醒邮件走 Microsoft Graph 时的登录（autotrader/notify.py；没装 Outlook 的电脑用）
 tzdata                  # 时区数据库：Windows 上换算美东时间（含夏令时）要用，run.py 和窗口时钟都依赖它
 
 # 窗口程序（gui.py）

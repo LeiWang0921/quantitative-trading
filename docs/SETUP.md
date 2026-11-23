@@ -33,7 +33,7 @@ This guide is for anyone who has downloaded this repository and wants to run it 
 | An Interactive Brokers (IBKR) account | paper and live trading | A paper account is enough to start. Not needed for dryrun mode. |
 | IB Gateway | paper and live trading | IBKR's lightweight API program. TWS also works, but uses different ports (see section 5). |
 | US stock market data in your IBKR account | paper and live trading | The program downloads daily price history from IBKR on every run. |
-| Classic Outlook desktop app | email alerts (optional) | Must be signed in. The "new Outlook" app does not work, because it has no COM interface. |
+| A personal Outlook.com account, or the classic Outlook desktop app | email alerts (optional) | See section 10. With Outlook.com no app needs to be installed; the classic desktop app needs an Office licence (the free "new Outlook" app cannot be used). |
 | Git | optional | Only needed if you want to download with `git clone` and update with `git pull`. |
 
 Python packages (installed automatically in step 3) are listed in `requirements.txt`: `ib_async` for the IBKR connection, `PySide6` for the monitoring window, and pandas, matplotlib, statsmodels, scikit-learn, arch, openpyxl and ipykernel for research and backtests.
@@ -281,21 +281,35 @@ tools\daily_run.bat --no-trade
 
 Each email includes the last 40 lines of that run's output.
 
-The email is sent **through the classic Outlook desktop app on the same PC**, so no password is stored anywhere. To set it up:
+No password is stored anywhere. There are two ways to send, chosen automatically:
 
-1. Sign in to your email account in classic Outlook.
-2. Set your address in `config.toml`. If this address is one of the accounts in Outlook, the email is sent from that account; otherwise Outlook's default account is used.
+**A. Microsoft Graph (no Outlook needed)** — for a personal Outlook.com / Hotmail account. Used when the file `data\ms_graph_token.json` exists.
+
+1. Set your address in `config.toml`:
 
    ```toml
    [notify]
-   email = "you@example.com"
+   email = "you@outlook.com"
    ```
 
+2. Sign in once:
+
+   ```bash
+   .venv\Scripts\python -m autotrader.notify --login
+   ```
+
+   It prints a web address and a code. Open the address on any device, enter the code, sign in with that Outlook account and accept "send mail as you". The app shown is "Microsoft Graph Command Line Tools", Microsoft's own public client for scripts, so you do not need to register an app.
 3. Send a test email:
 
    ```bash
    .venv\Scripts\python -m autotrader.notify
    ```
+
+The sign-in token lives only in `data\` (not in git). Microsoft expires it after about 90 days without use, so every scheduled run refreshes it. If a refresh ever fails, the run shows a pop-up asking you to run `--login` again; trading is not affected.
+
+**B. Classic Outlook desktop app** — used when there is no token file. Sign in to your email account in classic Outlook (it needs an Office licence; the free "new Outlook" app cannot be controlled by programs), set `[notify] email` as above, and send a test email with `.venv\Scripts\python -m autotrader.notify`. If the address is one of the accounts in Outlook, the email is sent from that account; otherwise Outlook's default account is used.
+
+Sending through `smtp-mail.outlook.com` with a password or app password does not work for personal Outlook.com accounts any more (Microsoft requires OAuth), which is why option A uses Microsoft Graph.
 
 To get notifications on your phone, install the Outlook app (or any mail app) there with the same account. Set `email = ""` to turn alerts off. Alerts cannot tell you about a PC that is off or asleep, because then the task does not run at all.
 
@@ -336,7 +350,7 @@ Built-in protection: if `mode` is not `"live"` but the connected account turns o
 | "拒单" (order rejected) in the log | An order exceeded `max_shares_per_order` / `max_order_value_usd`, or would have sold more shares than held. Check `[risk]`. |
 | "连接到的是实盘账户，但 mode 不是 live" (connected to a live account but mode is not live) | IB Gateway is logged in to the live account while `mode = "paper"`. Log in with the paper username. |
 | Scheduled run did not happen | The PC was off/asleep or you were not logged in to Windows. Check Task Scheduler's "Last Run Result" and `logs\scheduled_run.log`. |
-| Test email fails | Classic Outlook is not installed or not signed in (the "new Outlook" app is not supported). |
+| Test email fails | Microsoft Graph: run `.venv\Scripts\python -m autotrader.notify --login` again. Classic Outlook: it is not installed or not signed in (the "new Outlook" app is not supported). |
 | Shortcut does nothing after moving the folder | Run `.venv\Scripts\python tools\make_shortcut.py` again. |
 
 ## 14. Where things are stored

@@ -42,7 +42,8 @@ docs/
 autotrader/strategy.py   ★ 实盘/模拟盘的策略（纯计算：收盘价 → 各标的目标权重），和回测共用同一套函数
 autotrader/history.py    历史数据 CSV 的读写
 autotrader/config.py     读取 config.toml、常用路径
-autotrader/notify.py     邮件提醒：用本机 Outlook 发到 config.toml 的 [notify] email，不需要密码
+autotrader/notify.py     邮件提醒：发到 config.toml 的 [notify] email，不需要密码。有登录令牌时走 Microsoft Graph（不用装 Outlook，
+                         --login 登录一次），否则用本机 Outlook
 autotrader/records.py    run.py 每次运行的记录（data/last_run.json、data/nav_history.csv），给窗口程序读
 autotrader/gui/          窗口程序：app.py 界面、checks.py 运行环境检查、ibdata.py 只读取盈透数据、
                          config_edit.py 加入候选股、strategy_text.py 策略说明（数字从 config.toml 读）、
@@ -85,7 +86,8 @@ logs/scheduled_run.log   计划任务的运行记录（连接失败等错误也�
 
 # 改了 run.py、策略或 config.toml 之后跑一遍测试（不连盈透，约 2 秒）
 .venv\Scripts\python -m unittest discover -s tests
-.venv\Scripts\python -m autotrader.notify   # 发一封测试提醒邮件
+.venv\Scripts\python -m autotrader.notify          # 发一封测试提醒邮件
+.venv\Scripts\python -m autotrader.notify --login  # 用私人 Outlook 账号登录 Microsoft Graph（没装 Outlook 的电脑，一次即可）
 
 # 简单回测（需要 IB Gateway 已登录才能下载；下载后回测不用联网）
 .venv\Scripts\python fetch_data.py       # 下载当前策略全部标的的历史数据（25 年）
