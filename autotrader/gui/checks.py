@@ -18,8 +18,10 @@ from ..config import DATA_DIR, LOGS_DIR, ROOT
 
 TASK_NAME = "QuantTrading-DailyRun"
 # IB Gateway 可能的安装位置：默认安装是 C:\Jts\ibgateway\<版本号>\；指定目录安装（如 china-pc 的 D:\Jts\ibgateway）
-# 没有版本号这一层；按用户安装时在 %LOCALAPPDATA%\Programs\ibgateway
-GATEWAY_GLOBS = ["Jts/ibgateway/*/ibgateway.exe", "Jts/ibgateway/ibgateway.exe"]
+# 没有版本号这一层；按用户安装时在 %LOCALAPPDATA%\Programs\ibgateway。
+# 程序名可能是 ibgateway.exe，也可能带数字（china-pc 上重装后是 ibgateway1.exe）
+GATEWAY_EXE = "ibgateway*.exe"
+GATEWAY_GLOBS = [f"Jts/ibgateway/*/{GATEWAY_EXE}", f"Jts/ibgateway/{GATEWAY_EXE}"]
 GATEWAY_DRIVES = ["C:/", "D:/", "E:/"]
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # 用 pythonw 启动时，调用命令行工具不弹黑窗口
 
@@ -51,16 +53,16 @@ def port_open(host: str, port: int, timeout: float = 1.0) -> bool:
 def gateway_installs() -> list[Path]:
     found = {exe for drive in GATEWAY_DRIVES if Path(drive).exists()
              for pattern in GATEWAY_GLOBS for exe in Path(drive).glob(pattern)}
-    local = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "ibgateway" / "ibgateway.exe"
-    if local.exists():
-        found.add(local)
+    local = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "ibgateway"
+    if local.is_dir():
+        found.update(local.glob(GATEWAY_EXE))
     return sorted(found)
 
 
 def gateway_running() -> str | None:
     """Gateway 在运行时返回启动方式（"直接启动" / "IBC 启动"），否则 None。
-    双击图标启动时进程是 ibgateway.exe；用 IBC 自动登录时，Gateway 以 java.exe 运行（命令行里有 ibcalpha）。"""
-    if "ibgateway.exe" in _run(["tasklist", "/FI", "IMAGENAME eq ibgateway.exe", "/NH"]).lower():
+    双击图标启动时进程是 ibgateway.exe（或 ibgateway1.exe 等）；用 IBC 自动登录时，Gateway 以 java.exe 运行（命令行里有 ibcalpha）。"""
+    if "ibgateway" in _run(["tasklist", "/FI", "IMAGENAME eq ibgateway*", "/NH"]).lower():
         return "直接启动"
     ps = ("Get-CimInstance Win32_Process -Filter \"Name='java.exe' or Name='javaw.exe'\" | "
           "Where-Object { $_.CommandLine -like '*ibcalpha.ibc.IbcGateway*' } | Select-Object -First 1 -ExpandProperty ProcessId")

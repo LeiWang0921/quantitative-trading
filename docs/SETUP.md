@@ -165,7 +165,7 @@ IBKR makes IB Gateway exit for a full login about once a week, and the daily aut
 4. Close any IB Gateway you started by hand, and create a Task Scheduler task that runs `StartGateway.bat` at logon, with no time limit (`New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero)`). Start it once with `Start-ScheduledTask`.
 5. Windows Firewall may ask whether "Zulu Platform x64 Architecture" (Gateway's bundled Java) may accept connections from public and private networks. Choose **Cancel**: the trading programs connect from the same PC, which the firewall does not block.
 
-Under IBC, Gateway runs as `java.exe` instead of `ibgateway.exe`; the monitoring window recognises both.
+Under IBC, Gateway runs as `java.exe` instead of `ibgateway.exe` (some installs name it `ibgateway1.exe`); the monitoring window recognises both.
 
 ## 6. Configure `config.toml`
 
